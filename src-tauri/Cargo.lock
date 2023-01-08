@@ -6,7 +6,9 @@ version = 3
 name = "Launcher-tauri"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
  "log4rs",
+ "rand 0.8.5",
  "reqwest",
  "serde",
  "serde_json",

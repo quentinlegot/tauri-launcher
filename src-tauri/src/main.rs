@@ -6,6 +6,7 @@
 pub mod authentification;
 
 use authentification::{Authentification, Prompt};
+use anyhow::Result;
 
 // Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
 #[tauri::command]
@@ -14,9 +15,12 @@ fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
-async fn second_window(app: tauri::AppHandle, window: tauri::Window) -> Result<(), String> {
-    Authentification::launch(Prompt::SelectAccount, app);
-  Ok(())
+async fn second_window(app: tauri::AppHandle, _window: tauri::Window) -> Result<(), String> {
+    let result = Authentification::launch(Prompt::SelectAccount, app).await;
+    match result {
+        Ok(_) => Ok(()),
+        Err(err) => Err(err.to_string())
+    }
 }
 
 #[tokio::main]
