@@ -1,11 +1,11 @@
 use std::{fmt, net::TcpListener, sync::Arc};
 
 use rand::{thread_rng, Rng};
-use reqwest::{header::{CONTENT_TYPE, CONNECTION, ACCEPT}, Client};
+use reqwest::{header::{CONTENT_TYPE, CONNECTION, ACCEPT, AUTHORIZATION}, Client};
 use serde_json::{Value, json};
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, join};
 use urlencoding::encode;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use warp::{Filter, http::Response};
 use anyhow::{bail, Result, anyhow};
 
@@ -38,6 +38,7 @@ struct AccessRefreshToken {
     refresh_token: String
 }
 
+#[derive(Deserialize, Clone, Debug, Serialize)]
 struct XboxAuthData {
     token: String,
     uhs: String
@@ -123,8 +124,8 @@ impl Authentification {
             .await?;
 
         let token = AccessRefreshToken {
-            access_token: received["access_token"].to_string(),
-            refresh_token: received["refresh_token"].to_string()
+            access_token: String::from(received["access_token"].as_str().unwrap()),
+            refresh_token: String::from(received["refresh_token"].as_str().unwrap())
         };
 
         Ok(token)
@@ -150,29 +151,125 @@ impl Authentification {
         .await?
         .json()
         .await?;
-
-        let xbox_auth = XboxAuthData {
-            token: received["Token"].to_string(),
-            uhs: received["DisplayClaims"]["xui"][0]["uhs"].to_string()
-        };
-
-        Ok(xbox_auth)
+        Ok(XboxAuthData {
+            token: String::from(received["Token"].as_str().unwrap()),
+            uhs: String::from(received["DisplayClaims"]["xui"][0]["uhs"].as_str().unwrap())
+        })
     }
 
-    async fn fetch_xsts_token() -> Result<()> {
-
-
-        bail!("Not implemented yet")
+    async fn fetch_xsts_token(xbl_token: &XboxAuthData, reqwest_client: &Client) -> Result<String> {
+        let request_body = json!({
+            "Properties": {
+                "SandboxId": "RETAIL",
+                "UserTokens": [xbl_token.token]
+            },
+            "RelyingParty": "rp://api.minecraftservices.com/",
+            "TokenType": "JWT"
+        });
+        let received = reqwest_client
+            .post("https://xsts.auth.xboxlive.com/xsts/authorize")
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json")
+            .json(&request_body)
+            .send()
+            .await?;
+        if received.status() == 200 {
+            let data : Value = received.json().await?;
+            Ok(String::from(data["Token"].as_str().unwrap()))
+        } else if received.status() == 401 {
+            let data : Value = received.json().await?;
+            match data["XErr"].as_u64().unwrap() {
+                2148916233 => {
+                    bail!("Please sign up to xbox")
+                },
+                2148916235 => {
+                    bail!("Xbox Live is unavailable in your country")
+                },
+                2148916236 | 2148916237 => {
+                    bail!("Your account need adult verification, please visit xbox page")
+                },
+                2148916238 => {
+                    bail!("This account is marked as owned by a child and we cannot process until this account is added to a Family by an adult")
+                },
+                _ => {
+                    bail!("An unknow error occured, error code: {}", data["XErr"].as_u64().unwrap())
+                }
+            }
+        } else {
+            bail!("xsts return status code {}", received.status())
+        }
     }
 
-    pub async fn launch(prompt: Prompt, app: tauri::AppHandle) -> Result<()> {
+    async fn minecraft_auth(uhs: &String, xsts: String, reqwest_client: &Client) -> Result<String> {
+        let request_body: Value = json!({
+            "identityToken": format!("XBL3.0 x={};{}", uhs, xsts)
+        });
+        let received : Value = reqwest_client
+            .post("https://api.minecraftservices.com/authentication/login_with_xbox")
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json")
+            .json(&request_body)
+            .send()
+            .await?
+            .json()
+            .await?;
+        Ok(String::from(received["access_token"].as_str().unwrap())) // return jwt
+    }
+
+    async fn fetch_game_ownership(mc_token: &String, reqwest_client: &Client) -> Result<bool> {
+        let received : Value = reqwest_client
+            .get("https://api.minecraftservices.com/entitlements/mcstore")
+            .header(AUTHORIZATION, format!("Bearer {}", mc_token))
+            .header(ACCEPT, "application/json")
+            .send()
+            .await?
+            .json()
+            .await?;
+        if received.is_object() {
+            let arr = received.as_object().unwrap();
+            Ok(arr.len() != 0)
+        } else {
+            Ok(false)
+        }
+    }
+
+    async fn fetch_minecraft_profile(mc_token: &String, reqwest_client: &Client) -> Result<(String, String)> {
+        let received: Value  = reqwest_client
+            .get("https://api.minecraftservices.com/minecraft/profile")
+            .header(AUTHORIZATION, format!("Bearer {}", mc_token))
+            .header(ACCEPT, "application/json")
+            .send()
+            .await?
+            .json()
+            .await?;
+        if let Some(val) = received.get("error") {
+            bail!(String::from(val.as_str().unwrap()))
+        } else {
+            Ok((String::from(received["id"].as_str().unwrap()), String::from(received["name"].as_str().unwrap())))
+        }
+    }
+
+    pub async fn login(prompt: Prompt, app: tauri::AppHandle) -> Result<(String, String)> {
         let reqwest_client = Client::new();
         let oauth_token = Self::fetch_oauth2_token(prompt, app).await?;
         let access_refresh_token = Self::fetch_token(oauth_token.0, oauth_token.1, &reqwest_client).await?;
         let xbox_auth = Self::auth_xbox_live(access_refresh_token, &reqwest_client).await?;
-        
-
-        Ok(())
+        let xsts = Self::fetch_xsts_token(&xbox_auth, &reqwest_client).await?;
+        let mc_token = Self::minecraft_auth(&xbox_auth.uhs, xsts, &reqwest_client).await?;
+        println!("mc token : {}", mc_token);
+        let (is_mc_owner, profile) = join!(Self::fetch_game_ownership(&mc_token, &reqwest_client), Self::fetch_minecraft_profile(&mc_token, &reqwest_client));
+        match is_mc_owner {
+            Ok(is_mc_owner) => {
+                if is_mc_owner || profile.is_ok() /* game pass owner if have a game profile but isn't a owner */ {
+                    profile
+                } else {
+                    bail!("Not a owner of a minecraft copy")
+                }
+            },
+            Err(err) => {
+                bail!(err)
+            }
+        }
     }
 
     async fn listen(port_holder: TcpListener) -> Result<ReceivedCode> {

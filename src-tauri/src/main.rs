@@ -15,11 +15,11 @@ fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
-async fn second_window(app: tauri::AppHandle, _window: tauri::Window) -> Result<(), String> {
-    let result = Authentification::launch(Prompt::SelectAccount, app).await;
+async fn second_window(app: tauri::AppHandle, _window: tauri::Window) -> Result<String, ()> {
+    let result = Authentification::login(Prompt::SelectAccount, app).await;
     match result {
-        Ok(_) => Ok(()),
-        Err(err) => Err(err.to_string())
+        Ok(val) => Ok(format!("Hello {}", val.1)),
+        Err(err) => Ok(err.to_string())
     }
 }
 
