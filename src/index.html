@@ -5,6 +5,7 @@
     <link rel="stylesheet" href="style.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Tauri App</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js" defer></script>
     <script type="module" src="/main.js" defer></script>
     <style>
       .logo.vanilla:hover {
@@ -14,17 +15,8 @@
   </head>
 
   <body>
-    <div class="container">
-      <h1>Welcome to Tauri!</h1>
-
-      <div class="row">
-        <div>
-          <button id="greet-button" type="button">Login to Minecraft</button>
-          <button id="greet-button" type="button" hidden>Launch the game</button>
-        </div>
-      </div>
-
-      <p id="greet-msg"></p>
+    <div id="container">
+      <loginpage :invoke="invoke"></loginpage>
     </div>
   </body>
 </html>

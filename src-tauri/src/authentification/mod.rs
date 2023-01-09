@@ -256,7 +256,6 @@ impl Authentification {
         let xbox_auth = Self::auth_xbox_live(access_refresh_token, &reqwest_client).await?;
         let xsts = Self::fetch_xsts_token(&xbox_auth, &reqwest_client).await?;
         let mc_token = Self::minecraft_auth(&xbox_auth.uhs, xsts, &reqwest_client).await?;
-        println!("mc token : {}", mc_token);
         let (is_mc_owner, profile) = join!(Self::fetch_game_ownership(&mc_token, &reqwest_client), Self::fetch_minecraft_profile(&mc_token, &reqwest_client));
         match is_mc_owner {
             Ok(is_mc_owner) => {
