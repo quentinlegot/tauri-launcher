@@ -15,18 +15,18 @@ fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
-async fn second_window(app: tauri::AppHandle, _window: tauri::Window) -> Result<String, ()> {
+async fn login(app: tauri::AppHandle, _window: tauri::Window) -> Result<String, String> {
     let result = Authentification::login(Prompt::SelectAccount, app).await;
     match result {
         Ok(val) => Ok(format!("Hello {}", val.1)),
-        Err(err) => Ok(err.to_string())
+        Err(err) => Err(err.to_string())
     }
 }
 
 #[tokio::main]
 async fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![greet, second_window])
+        .invoke_handler(tauri::generate_handler![greet, login])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
