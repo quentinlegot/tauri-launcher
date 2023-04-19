@@ -4,6 +4,7 @@
 )]
 
 pub mod authentification;
+pub mod launcher;
 
 use authentification::{Authentification, Prompt};
 use anyhow::Result;
