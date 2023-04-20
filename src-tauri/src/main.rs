@@ -19,7 +19,7 @@ fn greet(name: &str) -> String {
 async fn login(app: tauri::AppHandle, _window: tauri::Window) -> Result<String, String> {
     let result = Authentification::login(Prompt::SelectAccount, app).await;
     match result {
-        Ok(val) => Ok(format!("Hello {}", val.1)),
+        Ok(val) => Ok(format!("Hello {}", val.name)),
         Err(err) => Err(err.to_string())
     }
 }

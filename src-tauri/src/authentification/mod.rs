@@ -2,7 +2,7 @@ use std::{fmt, net::TcpListener, sync::Arc};
 
 use rand::{thread_rng, Rng};
 use reqwest::{header::{CONTENT_TYPE, CONNECTION, ACCEPT, AUTHORIZATION}, Client};
-use serde_json::{Value, json};
+use serde_json::{Value, json, Map};
 use tokio::{sync::mpsc, join};
 use urlencoding::encode;
 use serde::{Deserialize, Serialize};
@@ -48,6 +48,14 @@ struct XboxAuthData {
 pub struct ReceivedCode {
     pub code: String,
     pub state: String,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct GameProfile {
+    pub id: String,
+    pub name: String,
+    pub skins: Vec<Value>,
+    pub capes: Vec<Value>,
 }
 
 pub struct Authentification;
@@ -233,7 +241,7 @@ impl Authentification {
         }
     }
 
-    async fn fetch_minecraft_profile(mc_token: &String, reqwest_client: &Client) -> Result<(String, String)> {
+    async fn fetch_minecraft_profile(mc_token: &String, reqwest_client: &Client) -> Result<GameProfile> {
         let received: Value  = reqwest_client
             .get("https://api.minecraftservices.com/minecraft/profile")
             .header(AUTHORIZATION, format!("Bearer {}", mc_token))
@@ -245,11 +253,15 @@ impl Authentification {
         if let Some(val) = received.get("error") {
             bail!(String::from(val.as_str().unwrap()))
         } else {
-            Ok((String::from(received["id"].as_str().unwrap()), String::from(received["name"].as_str().unwrap())))
+            let received: GameProfile = match serde_json::from_value(received) {
+                Ok(gp) => gp,
+                Err(err) => bail!(err),
+            };
+            Ok(received)
         }
     }
 
-    pub async fn login(prompt: Prompt, app: tauri::AppHandle) -> Result<(String, String)> {
+    pub async fn login(prompt: Prompt, app: tauri::AppHandle) -> Result<GameProfile> {
         let reqwest_client = Client::new();
         let oauth_token = Self::fetch_oauth2_token(prompt, app).await?;
         let access_refresh_token = Self::fetch_token(oauth_token.0, oauth_token.1, &reqwest_client).await?;
