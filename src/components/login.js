@@ -22,7 +22,14 @@ export default {
       }
     },
     download (e) {
-      
+      e.preventDefault()
+      if(!this.hideDownloadButton) {
+        this.invoke("download", {}).then(value => {
+          this.greet_message = value
+        }).catch(err => {
+          this.greet_message = "Error: " + err
+        })
+      }
     },
   },
   props: {
