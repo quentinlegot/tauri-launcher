@@ -2,7 +2,7 @@ use std::{fmt, net::TcpListener, sync::Arc};
 
 use rand::{thread_rng, Rng};
 use reqwest::{header::{CONTENT_TYPE, CONNECTION, ACCEPT, AUTHORIZATION}, Client};
-use serde_json::{Value, json, Map};
+use serde_json::{Value, json};
 use tokio::{sync::mpsc, join};
 use urlencoding::encode;
 use serde::{Deserialize, Serialize};

@@ -1,139 +1,45 @@
-use std::{fmt::Display, path::{self, Path}};
+mod manifest;
 
-use anyhow::{Result, bail};
-use reqwest::Client;
+use std::{path::Path, fs};
+
+use anyhow::Result;
+use reqwest::blocking::Client;
 use serde::{Serialize, Deserialize};
-use serde_json::{Value, Map};
-use tokio::fs;
 
 use crate::authentification::GameProfile;
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct VersionManifestV2 {
-    latest: Value,
-    versions: Vec<Version>
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Version {
-    id: String,
-    #[serde(rename(serialize = "type", deserialize = "type"))]
-    v_type: VersionType,
-    url: String,
-    sha1: String
-}
+use self::manifest::{VersionDetail, get_version_manifest, get_version_from_manifest, get_version_detail, Library, OSName};
 
 
-async fn get_version_manifest(reqwest: &Client) -> Result<VersionManifestV2> {
-    let received: VersionManifestV2 = reqwest
-    .get("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")
-    .send()
-    .await?
-    .json()
-    .await?;
-    Ok(received)
-}
+#[cfg(target_os="windows")]
+const ACTUAL_OS: OSName = OSName::Windows;
+#[cfg(target_os="linux")]
+const ACTUAL_OS: OSName = OSName::Linux;
+#[cfg(target_os="macos")]
+const ACTUAL_OS: OSName = OSName::MacOsX;
 
-fn get_version_from_manifest<'a>(manifest: &'a VersionManifestV2, game_version: String, version_type: &VersionType) -> Result<&'a Version> {
-    for i in manifest.versions.iter().enumerate() {
-        let id = i.1.id.clone();
-        let v_type = i.1.v_type;
-        if id == game_version && &v_type == version_type {
-            return Ok(i.1);
-        }
-    }
-    bail!("Version not Found")
-}
-
-#[derive(Serialize, Deserialize)]
-struct VersionDetail {
-    arguments: Map<String, Value>,
-    #[serde(rename(serialize = "assetIndex", deserialize = "assetIndex"))]
-    asset_index: Map<String, Value>,
-    assets: String,
-    downloads: Map<String, Value>,
-    id: String,
-    #[serde(rename(serialize = "javaVersion", deserialize = "javaVersion"))]
-    java_version: Map<String, Value>,
-    libraries: Vec<Library>,
-    logging: Map<String, Value>,
-    #[serde(rename(serialize = "mainClass", deserialize = "mainClass"))]
-    main_class: String,
-    #[serde(rename(serialize = "type", deserialize = "type"))]
-    v_type: VersionType
-}
-
-#[derive(Serialize, Deserialize)]
-struct Library {
-    downloads: LibraryDownload,
-    name: String,
-    rules: Vec<LibraryRule>
-}
-
-#[derive(Serialize, Deserialize)]
-struct LibraryRule {
-    action: String,
-    os: LibraryOSRule
-}
-#[derive(Serialize, Deserialize)]
-struct LibraryOSRule {
-    name: OSName,
-}
-
-#[derive(Serialize, Deserialize)]
-enum OSName {
-    #[serde(rename(serialize = "osx", deserialize = "osx"))]
-    MacOsX,
-    #[serde(rename(serialize = "linux", deserialize = "linux"))]
-    Linux,
-    #[serde(rename(serialize = "windows", deserialize = "windows"))]
-    Windows
-}
-
-#[derive(Serialize, Deserialize)]
-struct LibraryDownload {
-    artifact: LibraryArtifact
-}
-
-#[derive(Serialize, Deserialize)]
-struct LibraryArtifact {
-    path: String,
-    sha1: String,
-    size: i64,
-    url: String,
-}
-
-async fn get_version_detail(reqwest: &Client, version : &Version) -> Result<VersionDetail> {
-    let received: VersionDetail = reqwest
-    .get(version.url.clone())
-    .send()
-    .await?
-    .json()
-    .await?;
-    Ok(received)
-}
 pub struct ClientOptions<'a> {
-    authorization: GameProfile,
-    root_path: &'a Path,
-    javaPath: String,
-    version_number: String,
-    version_type: VersionType,
+    pub authorization: &'a GameProfile,
+    pub root_path: &'a Path,
+    pub java_path: &'a Path,
+    pub version_number: String,
+    pub version_type: VersionType,
     // version_custom: String, // for a next update
-    memory_min: String,
-    memory_max: String,
+    pub memory_min: String,
+    pub memory_max: String,
 }
 
 pub struct MinecraftClient<'a> {
-    opts: ClientOptions<'a>,
+    opts: &'a ClientOptions<'a>,
     details: VersionDetail,
     reqwest_client: Client,
 
 }
 
 impl<'a> MinecraftClient<'_> {
-    pub async fn new(opts: ClientOptions<'a>) -> Result<MinecraftClient<'a>> {
+    pub fn new(opts: &'a ClientOptions<'a>) -> Result<MinecraftClient<'a>> {
         let reqwest_client = Client::new();
-        let details = Self::load_manifest(&reqwest_client, &opts).await?;
+        let details = Self::load_manifest(&reqwest_client, &opts)?;
         Ok(MinecraftClient {
             opts,
             reqwest_client,
@@ -141,23 +47,41 @@ impl<'a> MinecraftClient<'_> {
         })
     }
 
-    async fn load_manifest(reqwest_client: &Client, opts: &ClientOptions<'a>) -> Result<VersionDetail> {
-        let manifest = get_version_manifest(&reqwest_client).await?;
+    fn load_manifest(reqwest_client: &Client, opts: &ClientOptions<'a>) -> Result<VersionDetail> {
+        let manifest = get_version_manifest(&reqwest_client)?;
         let version = get_version_from_manifest(&manifest, opts.version_number.clone(), &opts.version_type)?;
-        let details = get_version_detail(&reqwest_client, version).await?;
+        let details = get_version_detail(&reqwest_client, version)?;
         Ok(details)
     }
 
-    pub async fn download_assets(&self) -> Result<()> {
+    pub fn download_assets(&mut self) -> Result<()> {
         // create root folder if it doesn't exist
-        fs::create_dir_all(self.opts.root_path).await?;
-        fs::create_dir(self.opts.root_path.join("librairies")).await?;
-        
+        fs::create_dir_all(self.opts.root_path)?;
+        fs::create_dir(self.opts.root_path.join("librairies"))?;
+        self.filter_non_necessary_librairies();
         Ok(())
     }
     /// Filter non necessary librairies for the current OS
-    fn filter_non_necessary_librairies(&self) -> Result<()> {
-        bail!("Not implemented yet")
+    fn filter_non_necessary_librairies(&mut self) {
+        self.details.libraries.retain(|e| { Self::should_use_library(e) });  
+    }
+
+    fn should_use_library(library: &Library) -> bool {
+        if library.rules.is_empty() {
+            true
+        } else {
+            for i in library.rules.iter().enumerate() {
+                let op = if i.1.action == "allow" {
+                    true
+                } else {
+                    false
+                };
+                if i.1.os.name == ACTUAL_OS {
+                    return op;
+                }
+            }
+            false
+        }
     }
     
 }
@@ -174,32 +98,4 @@ pub enum VersionType {
     OldAlpha,
     #[serde(alias = "old_beta")]
     OldBeta,
-}
-
-impl<'a> TryInto<&'a VersionType> for &str {
-    type Error = ();
-
-    fn try_into(self) -> std::result::Result<&'a VersionType, Self::Error> {
-        match self {
-            "release" => Ok(&VersionType::Release),
-            "snapshot" => Ok(&VersionType::Snapshot),
-            "old_alpha" => Ok(&VersionType::OldAlpha),
-            "old_beta" => Ok(&VersionType::OldBeta),
-            _ => Err(()),
-        }
-    }
-
-    
-}
-
-impl Display for VersionType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let str = match self {
-            Self::Release => "release",
-            Self::Snapshot => "snapshot",
-            Self::OldAlpha => "old_alpha",
-            Self::OldBeta => "old_beta",
-        };
-        write!(f, "{}", str)
-    }
 }
