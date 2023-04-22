@@ -1,12 +1,11 @@
 mod manifest;
 
-use std::{path::Path, fs};
+use std::path::Path;
 
 use anyhow::Result;
-use reqwest::blocking::Client;
+use reqwest::Client;
 use serde::{Serialize, Deserialize};
-
-use crate::authentification::GameProfile;
+use tokio::fs;
 
 use self::manifest::{VersionDetail, get_version_manifest, get_version_from_manifest, get_version_detail, Library, OSName};
 
@@ -19,7 +18,6 @@ const ACTUAL_OS: OSName = OSName::Linux;
 const ACTUAL_OS: OSName = OSName::MacOsX;
 
 pub struct ClientOptions<'a> {
-    pub authorization: &'a GameProfile,
     pub root_path: &'a Path,
     pub java_path: &'a Path,
     pub version_number: String,
@@ -37,9 +35,9 @@ pub struct MinecraftClient<'a> {
 }
 
 impl<'a> MinecraftClient<'_> {
-    pub fn new(opts: &'a ClientOptions<'a>) -> Result<MinecraftClient<'a>> {
+    pub async fn new(opts: &'a ClientOptions<'a>) -> Result<MinecraftClient<'a>> {
         let reqwest_client = Client::new();
-        let details = Self::load_manifest(&reqwest_client, &opts)?;
+        let details = Self::load_manifest(&reqwest_client, &opts).await?;
         Ok(MinecraftClient {
             opts,
             reqwest_client,
@@ -47,18 +45,24 @@ impl<'a> MinecraftClient<'_> {
         })
     }
 
-    fn load_manifest(reqwest_client: &Client, opts: &ClientOptions<'a>) -> Result<VersionDetail> {
-        let manifest = get_version_manifest(&reqwest_client)?;
-        let version = get_version_from_manifest(&manifest, opts.version_number.clone(), &opts.version_type)?;
-        let details = get_version_detail(&reqwest_client, version)?;
+    async fn load_manifest(reqwest_client: &Client, opts: &ClientOptions<'a>) -> Result<VersionDetail> {
+        let manifest = get_version_manifest(&reqwest_client).await?;
+        let version = get_version_from_manifest(&manifest, opts.version_number.clone(), &opts.version_type).await?;
+        let details = get_version_detail(&reqwest_client, version).await?;
         Ok(details)
     }
 
-    pub fn download_assets(&mut self) -> Result<()> {
+    pub async fn download_assets(&mut self) -> Result<()> {
         // create root folder if it doesn't exist
-        fs::create_dir_all(self.opts.root_path)?;
-        fs::create_dir(self.opts.root_path.join("librairies"))?;
+        if !self.opts.root_path.exists() {
+            fs::create_dir_all(self.opts.root_path).await?;
+        }
+        let lib = self.opts.root_path.join("librairies");
+        if !lib.exists() {
+            fs::create_dir(lib).await?;
+        }
         self.filter_non_necessary_librairies();
+        
         Ok(())
     }
     /// Filter non necessary librairies for the current OS
@@ -67,20 +71,23 @@ impl<'a> MinecraftClient<'_> {
     }
 
     fn should_use_library(library: &Library) -> bool {
-        if library.rules.is_empty() {
-            true
-        } else {
-            for i in library.rules.iter().enumerate() {
-                let op = if i.1.action == "allow" {
-                    true
-                } else {
-                    false
-                };
-                if i.1.os.name == ACTUAL_OS {
-                    return op;
+        match &library.rules {
+            Some(rules) => {
+                for i in rules.iter().enumerate() {
+                    let op = if i.1.action == "allow" {
+                        true
+                    } else {
+                        false
+                    };
+                    if i.1.os.name == ACTUAL_OS {
+                        return op;
+                    }
                 }
+                false
+            },
+            None => {
+                true
             }
-            false
         }
     }
     

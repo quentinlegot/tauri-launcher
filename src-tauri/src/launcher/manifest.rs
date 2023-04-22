@@ -1,5 +1,5 @@
 use anyhow::{Result, bail};
-use reqwest::blocking::Client;
+use reqwest::Client;
 use serde::{Serialize, Deserialize};
 use serde_json::{Value, Map};
 
@@ -21,15 +21,17 @@ pub struct Version {
 }
 
 
-pub fn get_version_manifest(reqwest: &Client) -> Result<VersionManifestV2> {
+pub async fn get_version_manifest(reqwest: &Client) -> Result<VersionManifestV2> {
     let received: VersionManifestV2 = reqwest
     .get("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")
-    .send()?
-    .json()?;
+    .send()
+    .await?
+    .json()
+    .await?;
     Ok(received)
 }
 
-pub fn get_version_from_manifest<'a>(manifest: &'a VersionManifestV2, game_version: String, version_type: &VersionType) -> Result<&'a Version> {
+pub async fn get_version_from_manifest<'a>(manifest: &'a VersionManifestV2, game_version: String, version_type: &VersionType) -> Result<&'a Version> {
     for i in manifest.versions.iter().enumerate() {
         let id = i.1.id.clone();
         let v_type = i.1.v_type;
@@ -62,7 +64,7 @@ pub struct VersionDetail {
 pub struct Library {
     pub downloads: LibraryDownload,
     pub name: String,
-    pub rules: Vec<LibraryRule>
+    pub rules: Option<Vec<LibraryRule>>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -98,10 +100,12 @@ struct LibraryArtifact {
     url: String,
 }
 
-pub fn get_version_detail(reqwest: &Client, version : &Version) -> Result<VersionDetail> {
+pub async fn get_version_detail(reqwest: &Client, version : &Version) -> Result<VersionDetail> {
     let received: VersionDetail = reqwest
     .get(version.url.clone())
-    .send()?
-    .json()?;
+    .send()
+    .await?
+    .json()
+    .await?;
     Ok(received)
 }

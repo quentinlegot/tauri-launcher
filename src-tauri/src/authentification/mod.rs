@@ -52,7 +52,7 @@ pub struct ReceivedCode {
     pub state: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct GameProfile {
     pub id: String,
     pub name: String,

@@ -9,7 +9,7 @@ pub mod launcher;
 use std::sync::Mutex;
 
 use authentification::{Authentification, Prompt, GameProfile};
-use anyhow::Result;
+use anyhow::{Result, bail};
 use directories::BaseDirs;
 use launcher::{MinecraftClient, ClientOptions};
 
@@ -44,45 +44,32 @@ async fn login(app: tauri::AppHandle, _window: tauri::Window, state: tauri::Stat
 #[tauri::command]
 async fn download(state: tauri::State<'_, Mutex<CustomState>>) -> Result<String, String> {
     if let Some(base_dir) = BaseDirs::new() {
-        let data_folder = base_dir.data_dir().join(".altarik");
+        let data_folder = base_dir.data_dir().join(".altarik_test");
         let root_path = data_folder.as_path();
-        match state.lock() {
-            Ok(game_profile) => {
-                match &game_profile.0 {
-                    Some(game_profile) => {
-                        // let java_path = root_path.join("java");
-                        // let opts = ClientOptions {
-                        //     authorization: game_profile,
-                        //     root_path,
-                        //     java_path: &java_path.as_path(),
-                        //     version_number: "1.19.4".to_string(),
-                        //     version_type: launcher::VersionType::Release,
-                        //     memory_min: "2G".to_string(),
-                        //     memory_max: "4G".to_string(),
-                        // };
-                        // let client = MinecraftClient::new(&opts);
-                        // match client {
-                        //     Ok(mut client) => {
-                        //         match client.download_assets() {
-                        //             Ok(_) => {
-                        //                 Ok("Content downloaded".to_string())
-                        //             },
-                        //             Err(err) => {
-                        //                 Err(err.to_string())
-                        //             }
-                        //         }
-                        //     },
-                        //     Err(err) => {
-                        //         Err(err.to_string())
-                        //     }
-                        // }
-                        Ok("Client created".to_string())
+        let java_path = root_path.join("java");
+        let game_profile = match state.lock() {
+            Ok(res) => Ok(res.0.clone()),
+            Err(err) => Err(err.to_string())
+        }?;
+        let opts = ClientOptions {
+            root_path,
+            java_path: &java_path.as_path(),
+            version_number: "1.19.4".to_string(),
+            version_type: launcher::VersionType::Release,
+            memory_min: "2G".to_string(),
+            memory_max: "4G".to_string(),
+        };
+        let client = MinecraftClient::new(&opts).await;
+        match client {
+            Ok(mut client) => {
+                match client.download_assets().await {
+                    Ok(_) => {
+                        Ok("Content downloaded".to_string())
                     },
-                    None => {
-                        Err("You're not connected".to_string())
+                    Err(err) => {
+                        Err(err.to_string())
                     }
                 }
-                
             },
             Err(err) => {
                 Err(err.to_string())
