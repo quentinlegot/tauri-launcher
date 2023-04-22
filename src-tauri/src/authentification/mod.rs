@@ -3,6 +3,7 @@ use std::{fmt, net::TcpListener, sync::Arc};
 use rand::{thread_rng, Rng};
 use reqwest::{header::{CONTENT_TYPE, CONNECTION, ACCEPT, AUTHORIZATION}, Client};
 use serde_json::{Value, json};
+use tauri::{WindowEvent, async_runtime::{spawn_blocking}};
 use tokio::{sync::mpsc, join};
 use urlencoding::encode;
 use serde::{Deserialize, Serialize};
@@ -33,6 +34,7 @@ pub struct OauthToken {
     prompt: Arc<Prompt>
 }
 
+#[allow(dead_code)]
 struct AccessRefreshToken {
     access_token: String,
     refresh_token: String
@@ -74,6 +76,11 @@ impl Authentification {
         format!("https://login.live.com/oauth20_authorize.srf?client_id={}&response_type=code&redirect_uri={}&scope=Xboxlive.signin+Xboxlive.offline_access&prompt={}&state={}", token.client_id, encode(token.redirect.as_str()), token.prompt, state)
     }
 
+    #[allow(unused_must_use)]
+    fn send_blocking(sender: tokio::sync::mpsc::Sender<bool>) {
+        sender.blocking_send(true);
+    }
+
     async fn fetch_oauth2_token(prompt: Prompt, app: tauri::AppHandle) -> Result<(ReceivedCode, OauthToken)> {
         let state: String = thread_rng()
             .sample_iter(&rand::distributions::Alphanumeric)
@@ -101,14 +108,39 @@ impl Authentification {
             "externam",
             tauri::WindowUrl::External(link.parse().unwrap())
         ).build().expect("Failed to build window");
-        let received = Self::listen(port_holder.unwrap()).await?;
-        second_window.close()?;
-
-        if received.state != state {
-            bail!("CSRF check fail")
+        let (sender, mut receiver) = mpsc::channel::<bool>(2);
+        second_window.on_window_event(move|e| {
+            match e {
+                WindowEvent::Destroyed => {
+                    let sender = sender.clone();
+                    spawn_blocking(|| Self::send_blocking(sender));
+                },
+                _ => {}
+            }
+        });
+        let listener = Self::listen(port_holder.unwrap());
+        tokio::select! {
+            received = listener => {
+                match received {
+                    Ok(received) => {
+                        println!("received code");
+                        second_window.close()?;
+                        
+                        if received.state != state {
+                            bail!("CSRF check fail")
+                        }
+                        Ok((received, token_data))
+                    },
+                    Err(err) => {
+                        bail!(err)
+                    }
+                }
+            },
+            _ = receiver.recv() => {
+                println!("window closed");
+                bail!("You closed the window before completion")
+            }
         }
-
-        Ok((received, token_data))
     }
 
     // fn create_link_from_prompt(prompt: Prompt) -> String {
