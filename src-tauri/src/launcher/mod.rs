@@ -68,36 +68,32 @@ impl<'a> MinecraftClient<'_> {
         for (_, i) in self.details.libraries.iter().enumerate() {
             let p = i.downloads.artifact.path.clone();
             let mut splited = p.split("/").collect::<Vec<&str>>();
-            splited.pop(); // remove last element
+            let filename = splited.pop().ok_or(anyhow::anyhow!("Invalid filename"))?; // remove last element
             let p = splited.join(path::MAIN_SEPARATOR_STR);
             let p = &lib.join(p);
             fs::create_dir_all(p).await?;
             let url = i.downloads.artifact.url.clone();
-            let mut sha = url.clone();
-            sha.push_str(".sha1");
-
-            let sha1 = self.reqwest_client
-            .get(sha)
-            .send()
-            .await?
-            .text()
-            .await?;
-            if sha1 != i.downloads.artifact.sha1 {
-                bail!("Sha1 hash of a library is invalid, a malicious file might be present on the remote server")
-            }
             let content = self.reqwest_client
             .get(url)
             .send()
             .await?
             .bytes()
             .await?;
-            let mut file = fs::File::create(p).await?;
+            /* let mut hasher = Sha1::new();
+            hasher.update(&content);
+            let sha1 = hasher.finalize().to_vec();
+            if sha1 != i.downloads.artifact.sha1.as_bytes() {
+                bail!("Sha1 {:?} of {} is invalid, a malicious file might be present on the remote server, should be {}", sha1, i.name, i.downloads.artifact.sha1)
+            } */
+            let file = p.join(filename);
+            let mut file = fs::File::create(file).await?;
             file.write_all(&content).await?;
             println!("{} downloaded", i.name);
         }
         
         Ok(())
     }
+
     /// Filter non necessary librairies for the current OS
     fn filter_non_necessary_librairies(&mut self) {
         self.details.libraries.retain(|e| { Self::should_use_library(e) });  
