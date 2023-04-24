@@ -9,7 +9,7 @@ pub mod launcher;
 use std::sync::Mutex;
 
 use authentification::{Authentification, Prompt, GameProfile};
-use anyhow::{Result, bail};
+use anyhow::Result;
 use directories::BaseDirs;
 use launcher::{MinecraftClient, ClientOptions};
 
@@ -51,7 +51,11 @@ async fn download(state: tauri::State<'_, Mutex<CustomState>>) -> Result<String,
             Ok(res) => Ok(res.0.clone()),
             Err(err) => Err(err.to_string())
         }?;
+        if game_profile.is_none() {
+            return Err("You're not connected".to_string());
+        }
         let opts = ClientOptions {
+            authorization: game_profile.unwrap(),
             root_path,
             java_path: &java_path.as_path(),
             version_number: "1.19.4".to_string(),

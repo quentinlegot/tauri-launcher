@@ -69,7 +69,7 @@ pub struct Library {
 
 #[derive(Serialize, Deserialize)]
 pub struct LibraryDownload {
-    artifact: LibraryArtifact
+    pub artifact: LibraryArtifact
 }
 
 #[derive(Serialize, Deserialize)]
@@ -93,11 +93,11 @@ pub enum OSName {
 }
 
 #[derive(Serialize, Deserialize)]
-struct LibraryArtifact {
-    path: String,
-    sha1: String,
-    size: i64,
-    url: String,
+pub struct LibraryArtifact {
+    pub path: String,
+    pub sha1: String,
+    pub size: i64,
+    pub url: String,
 }
 
 pub async fn get_version_detail(reqwest: &Client, version : &Version) -> Result<VersionDetail> {

@@ -1,11 +1,13 @@
 mod manifest;
 
-use std::path::Path;
+use std::path::{Path, self};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use reqwest::Client;
 use serde::{Serialize, Deserialize};
-use tokio::fs;
+use tokio::{fs, io::AsyncWriteExt};
+
+use crate::authentification::GameProfile;
 
 use self::manifest::{VersionDetail, get_version_manifest, get_version_from_manifest, get_version_detail, Library, OSName};
 
@@ -18,6 +20,7 @@ const ACTUAL_OS: OSName = OSName::Linux;
 const ACTUAL_OS: OSName = OSName::MacOsX;
 
 pub struct ClientOptions<'a> {
+    pub authorization: GameProfile,
     pub root_path: &'a Path,
     pub java_path: &'a Path,
     pub version_number: String,
@@ -57,11 +60,41 @@ impl<'a> MinecraftClient<'_> {
         if !self.opts.root_path.exists() {
             fs::create_dir_all(self.opts.root_path).await?;
         }
-        let lib = self.opts.root_path.join("librairies");
+        let lib = &self.opts.root_path.join("libraries");
         if !lib.exists() {
             fs::create_dir(lib).await?;
         }
         self.filter_non_necessary_librairies();
+        for (_, i) in self.details.libraries.iter().enumerate() {
+            let p = i.downloads.artifact.path.clone();
+            let mut splited = p.split("/").collect::<Vec<&str>>();
+            splited.pop(); // remove last element
+            let p = splited.join(path::MAIN_SEPARATOR_STR);
+            let p = &lib.join(p);
+            fs::create_dir_all(p).await?;
+            let url = i.downloads.artifact.url.clone();
+            let mut sha = url.clone();
+            sha.push_str(".sha1");
+
+            let sha1 = self.reqwest_client
+            .get(sha)
+            .send()
+            .await?
+            .text()
+            .await?;
+            if sha1 != i.downloads.artifact.sha1 {
+                bail!("Sha1 hash of a library is invalid, a malicious file might be present on the remote server")
+            }
+            let content = self.reqwest_client
+            .get(url)
+            .send()
+            .await?
+            .bytes()
+            .await?;
+            let mut file = fs::File::create(p).await?;
+            file.write_all(&content).await?;
+            println!("{} downloaded", i.name);
+        }
         
         Ok(())
     }
