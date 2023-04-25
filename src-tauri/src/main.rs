@@ -42,7 +42,7 @@ async fn login(app: tauri::AppHandle, _window: tauri::Window, state: tauri::Stat
 }
 
 #[tauri::command]
-async fn download(state: tauri::State<'_, Mutex<CustomState>>) -> Result<String, String> {
+async fn download(app: tauri::AppHandle, state: tauri::State<'_, Mutex<CustomState>>) -> Result<String, String> {
     if let Some(base_dir) = BaseDirs::new() {
         let data_folder = base_dir.data_dir().join(".altarik_test");
         let root_path = data_folder.as_path();
@@ -66,7 +66,7 @@ async fn download(state: tauri::State<'_, Mutex<CustomState>>) -> Result<String,
         let client = MinecraftClient::new(&opts).await;
         match client {
             Ok(mut client) => {
-                match client.download_assets().await {
+                match client.download_assets(app).await {
                     Ok(_) => {
                         Ok("Content downloaded".to_string())
                     },

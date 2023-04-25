@@ -5,6 +5,7 @@ use std::path::{Path, self};
 use anyhow::{Result, bail};
 use reqwest::{Client, StatusCode};
 use serde::{Serialize, Deserialize};
+use tauri::Manager;
 use tokio::{fs, io::{AsyncWriteExt, AsyncSeekExt}};
 
 use crate::authentification::GameProfile;
@@ -18,6 +19,13 @@ const ACTUAL_OS: OSName = OSName::Windows;
 const ACTUAL_OS: OSName = OSName::Linux;
 #[cfg(target_os="macos")]
 const ACTUAL_OS: OSName = OSName::MacOsX;
+
+#[derive(Clone, serde::Serialize)]
+struct ProgressMessage {
+    p_type: String,
+    current: usize,
+    total: usize,
+}
 
 pub struct ClientOptions<'a> {
     pub authorization: GameProfile,
@@ -55,7 +63,7 @@ impl<'a> MinecraftClient<'_> {
         Ok(details)
     }
 
-    pub async fn download_assets(&mut self) -> Result<()> {
+    pub async fn download_assets(&mut self, app: tauri::AppHandle) -> Result<()> {
         // create root folder if it doesn't exist
         if !self.opts.root_path.exists() {
             fs::create_dir_all(self.opts.root_path).await?;
@@ -65,7 +73,8 @@ impl<'a> MinecraftClient<'_> {
             fs::create_dir(lib).await?;
         }
         self.filter_non_necessary_librairies();
-        for (_, i) in self.details.libraries.iter().enumerate() {
+        let total = self.details.libraries.len();
+        for (progress, i) in self.details.libraries.iter().enumerate() {
             let p = i.downloads.artifact.path.clone();
             let mut splited = p.split("/").collect::<Vec<&str>>();
             let filename = splited.pop().ok_or(anyhow::anyhow!("Invalid filename"))?; // remove last element
@@ -112,6 +121,7 @@ impl<'a> MinecraftClient<'_> {
             } else {
                 println!("{} already downloaded", i.name);
             }
+            app.emit_all("progress", ProgressMessage { p_type: "libraries".to_string(), current: progress + 1, total })?;
         }
         
         Ok(())

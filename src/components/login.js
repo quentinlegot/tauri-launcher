@@ -1,4 +1,4 @@
-export default {
+const vue = {
   data() {
     return {
       button_message: "Login to minecraft",
@@ -6,6 +6,15 @@ export default {
       greetDisabled: 0,
       hideDownloadButton: true,
     }
+  },
+  created() {
+    console.log(this)
+    this.listen('progress', (event) => {
+      // event.event is the event name (useful if you want to use a single callback fn for multiple event types)
+      // event.payload is the payload object
+      console.log(event.payload)
+      this.greet_message = event.payload
+    })
   },
   methods: {
     login (e) {
@@ -25,7 +34,7 @@ export default {
       e.preventDefault()
       if(!this.hideDownloadButton) {
         this.invoke("download", {}).then(value => {
-          this.greet_message = value
+          // this.greet_message = value
         }).catch(err => {
           this.greet_message = "Error: " + err
         })
@@ -33,7 +42,8 @@ export default {
     },
   },
   props: {
-    invoke: Object
+    invoke: Object,
+    listen: Object,
   },
   template: `
   <h1>Welcome to Tauri!</h1>
@@ -48,3 +58,5 @@ export default {
   <p id="greet-msg">{{ greet_message }}</p>
   `
 }
+
+export default vue;
