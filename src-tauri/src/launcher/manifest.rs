@@ -96,7 +96,7 @@ pub enum OSName {
 pub struct LibraryArtifact {
     pub path: String,
     pub sha1: String,
-    pub size: i64,
+    pub size: u64,
     pub url: String,
 }
 

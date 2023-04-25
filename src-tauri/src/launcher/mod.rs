@@ -3,9 +3,9 @@ mod manifest;
 use std::path::{Path, self};
 
 use anyhow::{Result, bail};
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use serde::{Serialize, Deserialize};
-use tokio::{fs, io::AsyncWriteExt};
+use tokio::{fs, io::{AsyncWriteExt, AsyncSeekExt}};
 
 use crate::authentification::GameProfile;
 
@@ -72,23 +72,37 @@ impl<'a> MinecraftClient<'_> {
             let p = splited.join(path::MAIN_SEPARATOR_STR);
             let p = &lib.join(p);
             fs::create_dir_all(p).await?;
-            let url = i.downloads.artifact.url.clone();
-            let content = self.reqwest_client
-            .get(url)
-            .send()
-            .await?
-            .bytes()
-            .await?;
-            /* let mut hasher = Sha1::new();
-            hasher.update(&content);
-            let sha1 = hasher.finalize().to_vec();
-            if sha1 != i.downloads.artifact.sha1.as_bytes() {
-                bail!("Sha1 {:?} of {} is invalid, a malicious file might be present on the remote server, should be {}", sha1, i.name, i.downloads.artifact.sha1)
-            } */
             let file = p.join(filename);
             let mut file = fs::File::create(file).await?;
-            file.write_all(&content).await?;
-            println!("{} downloaded", i.name);
+            let size = file.seek(std::io::SeekFrom::End(0)).await?;
+            file.seek(std::io::SeekFrom::Start(0)).await?;
+            let url = i.downloads.artifact.url.clone();
+            if size != i.downloads.artifact.size {
+                let mut sha_url = url.clone();
+                sha_url.push_str(".sha1");
+                let sha1 = self.reqwest_client
+                .get(sha_url)
+                .send()
+                .await?;
+                if sha1.status() == StatusCode::OK {
+                    let sha1 = sha1.text().await?;
+                    if sha1 != i.downloads.artifact.sha1 {
+                        bail!("Sha1 {:?} of {} is invalid, a malicious file might be present on the remote server, should be {}", sha1, i.name, i.downloads.artifact.sha1)
+                    }
+                }
+                
+                let content = self.reqwest_client
+                .get(url)
+                .send()
+                .await?
+                .bytes()
+                .await?;
+                file.write_all(&content).await?;
+                println!("{} downloaded, size: {}, expected: {}", i.name, size, i.downloads.artifact.size);
+            } else {
+                println!("{} already downloaded", i.name);
+            }
+            
         }
         
         Ok(())
