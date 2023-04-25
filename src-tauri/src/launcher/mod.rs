@@ -72,12 +72,22 @@ impl<'a> MinecraftClient<'_> {
             let p = splited.join(path::MAIN_SEPARATOR_STR);
             let p = &lib.join(p);
             fs::create_dir_all(p).await?;
-            let file = p.join(filename);
-            let mut file = fs::File::create(file).await?;
+            let file_path = p.join(filename);
+            let mut file = if (&file_path).exists() {
+                let f = fs::File::open(&file_path).await;
+                match f {
+                    Ok(f) => f,
+                    Err(err) => bail!(err),
+                }
+            } else {
+                fs::File::create(file_path).await?
+            };
+            
             let size = file.seek(std::io::SeekFrom::End(0)).await?;
             file.seek(std::io::SeekFrom::Start(0)).await?;
-            let url = i.downloads.artifact.url.clone();
             if size != i.downloads.artifact.size {
+                let url = i.downloads.artifact.url.clone();
+
                 let mut sha_url = url.clone();
                 sha_url.push_str(".sha1");
                 let sha1 = self.reqwest_client
@@ -98,11 +108,10 @@ impl<'a> MinecraftClient<'_> {
                 .bytes()
                 .await?;
                 file.write_all(&content).await?;
-                println!("{} downloaded, size: {}, expected: {}", i.name, size, i.downloads.artifact.size);
+                println!("{} downloaded", i.name);
             } else {
                 println!("{} already downloaded", i.name);
             }
-            
         }
         
         Ok(())
