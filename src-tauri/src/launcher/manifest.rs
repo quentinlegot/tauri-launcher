@@ -46,7 +46,7 @@ pub async fn get_version_from_manifest<'a>(manifest: &'a VersionManifestV2, game
 pub struct VersionDetail {
     arguments: Map<String, Value>,
     #[serde(rename(serialize = "assetIndex", deserialize = "assetIndex"))]
-    asset_index: Map<String, Value>,
+    pub asset_index: AssetIndex,
     assets: String,
     downloads: Map<String, Value>,
     id: String,
@@ -58,6 +58,16 @@ pub struct VersionDetail {
     main_class: String,
     #[serde(rename(serialize = "type", deserialize = "type"))]
     v_type: VersionType
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct AssetIndex {
+    pub id: i32,
+    pub sha1: String,
+    pub size: usize,
+    #[serde(rename(serialize = "totalSize", deserialize = "totalSize"))]
+    pub total_size: usize,
+    pub url: String
 }
 
 #[derive(Serialize, Deserialize)]
@@ -108,4 +118,13 @@ pub async fn get_version_detail(reqwest: &Client, version : &Version) -> Result<
     .json()
     .await?;
     Ok(received)
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct AssetsManifest {
+    objects: Map<String, Value>,
+}
+
+pub async fn get_version_assets(assets_index: &AssetIndex) -> Result<()> {
+    bail!("Not yet implemented")
 }

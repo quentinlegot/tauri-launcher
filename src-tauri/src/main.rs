@@ -11,7 +11,9 @@ use std::sync::Mutex;
 use authentification::{Authentification, Prompt, GameProfile};
 use anyhow::Result;
 use directories::BaseDirs;
-use launcher::{MinecraftClient, ClientOptions};
+use launcher::{MinecraftClient, ClientOptions, ProgressMessage};
+use tauri::Manager;
+use tokio::sync::mpsc;
 
 struct CustomState (Option<GameProfile>);
 
@@ -54,8 +56,10 @@ async fn download(app: tauri::AppHandle, state: tauri::State<'_, Mutex<CustomSta
         if game_profile.is_none() {
             return Err("You're not connected".to_string());
         }
+        let (sender,  receiver) = mpsc::channel(50);
         let opts = ClientOptions {
             authorization: game_profile.unwrap(),
+            log_channel: sender.clone(),
             root_path,
             java_path: &java_path.as_path(),
             version_number: "1.19.4".to_string(),
@@ -63,25 +67,44 @@ async fn download(app: tauri::AppHandle, state: tauri::State<'_, Mutex<CustomSta
             memory_min: "2G".to_string(),
             memory_max: "4G".to_string(),
         };
-        let client = MinecraftClient::new(&opts).await;
-        match client {
-            Ok(mut client) => {
-                match client.download_assets(app).await {
-                    Ok(_) => {
-                        Ok("Content downloaded".to_string())
-                    },
-                    Err(err) => {
-                        Err(err.to_string())
-                    }
-                }
-            },
-            Err(err) => {
-                Err(err.to_string())
-            }
-        }
+        let res = tokio::join!(
+            download_libraries(opts),
+            read_channel(receiver, app),
+
+        );
+        res.0
         
     } else {
         Err("Cannot download files".to_string())
+    }
+}
+
+
+async fn download_libraries(opts: ClientOptions<'_>) -> Result<String, String> {
+    let client = MinecraftClient::new(&opts).await;
+    match client {
+        Ok(mut client) => {
+            match client.download_requirements().await {
+                Ok(_) => {
+                    Ok("Content downloaded".to_string())
+                },
+                Err(err) => {
+                    Err(err.to_string())
+                }
+            }
+        },
+        Err(err) => {
+            Err(err.to_string())
+        }
+    }
+}
+
+async fn read_channel(mut receiver: mpsc::Receiver<ProgressMessage>, app: tauri::AppHandle) -> Result<()> {
+    loop {
+        match receiver.recv().await {
+            Some(msg) => app.emit_all("progress", msg)?,
+            None => break Ok(())
+        }
     }
 }
 

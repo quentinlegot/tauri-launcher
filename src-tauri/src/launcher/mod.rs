@@ -1,16 +1,15 @@
 mod manifest;
 
-use std::path::{Path, self};
+use std::path::{Path, self, PathBuf};
 
 use anyhow::{Result, bail};
 use reqwest::{Client, StatusCode};
 use serde::{Serialize, Deserialize};
-use tauri::Manager;
-use tokio::{fs, io::{AsyncWriteExt, AsyncSeekExt}};
+use tokio::{fs, io::{AsyncWriteExt, AsyncSeekExt}, sync::mpsc};
 
 use crate::authentification::GameProfile;
 
-use self::manifest::{VersionDetail, get_version_manifest, get_version_from_manifest, get_version_detail, Library, OSName};
+use self::manifest::{VersionDetail, get_version_manifest, get_version_from_manifest, get_version_detail, Library, OSName, get_version_assets};
 
 
 #[cfg(target_os="windows")]
@@ -20,8 +19,8 @@ const ACTUAL_OS: OSName = OSName::Linux;
 #[cfg(target_os="macos")]
 const ACTUAL_OS: OSName = OSName::MacOsX;
 
-#[derive(Clone, serde::Serialize)]
-struct ProgressMessage {
+#[derive(Clone, serde::Serialize, Debug)]
+pub struct ProgressMessage {
     p_type: String,
     current: usize,
     total: usize,
@@ -29,6 +28,7 @@ struct ProgressMessage {
 
 pub struct ClientOptions<'a> {
     pub authorization: GameProfile,
+    pub log_channel: mpsc::Sender<ProgressMessage>,
     pub root_path: &'a Path,
     pub java_path: &'a Path,
     pub version_number: String,
@@ -60,10 +60,11 @@ impl<'a> MinecraftClient<'_> {
         let manifest = get_version_manifest(&reqwest_client).await?;
         let version = get_version_from_manifest(&manifest, opts.version_number.clone(), &opts.version_type).await?;
         let details = get_version_detail(&reqwest_client, version).await?;
+        // let version_assets = get_version_assets(&details.asset_index).await?;
         Ok(details)
     }
 
-    pub async fn download_assets(&mut self, app: tauri::AppHandle) -> Result<()> {
+    pub async fn download_requirements(&mut self) -> Result<()> {
         // create root folder if it doesn't exist
         if !self.opts.root_path.exists() {
             fs::create_dir_all(self.opts.root_path).await?;
@@ -72,6 +73,12 @@ impl<'a> MinecraftClient<'_> {
         if !lib.exists() {
             fs::create_dir(lib).await?;
         }
+        self.download_libraries(lib).await?;
+        self.opts.log_channel.closed().await;
+        Ok(())
+    }
+
+    async fn download_libraries(&mut self, lib: &PathBuf) -> Result<()> {
         self.filter_non_necessary_librairies();
         let total = self.details.libraries.len();
         for (progress, i) in self.details.libraries.iter().enumerate() {
@@ -121,15 +128,18 @@ impl<'a> MinecraftClient<'_> {
             } else {
                 println!("{} already downloaded", i.name);
             }
-            app.emit_all("progress", ProgressMessage { p_type: "libraries".to_string(), current: progress + 1, total })?;
+            self.opts.log_channel.send( ProgressMessage { p_type: "libraries".to_string(), current: progress + 1, total }).await?;
         }
-        
         Ok(())
     }
 
     /// Filter non necessary librairies for the current OS
     fn filter_non_necessary_librairies(&mut self) {
         self.details.libraries.retain(|e| { Self::should_use_library(e) });  
+    }
+
+    async fn download_assets(&mut self) -> Result<()> {
+        bail!("Not yet implemented")
     }
 
     fn should_use_library(library: &Library) -> bool {
