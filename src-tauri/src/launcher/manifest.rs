@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::{Result, bail};
 use reqwest::Client;
 use serde::{Serialize, Deserialize};
@@ -122,9 +124,21 @@ pub async fn get_version_detail(reqwest: &Client, version : &Version) -> Result<
 
 #[derive(Serialize, Deserialize)]
 pub struct AssetsManifest {
-    objects: Map<String, Value>,
+    pub objects: HashMap<String, AssetObject>,
 }
 
-pub async fn get_version_assets(assets_index: &AssetIndex) -> Result<()> {
-    bail!("Not yet implemented")
+#[derive(Serialize, Deserialize)]
+pub struct AssetObject {
+    pub hash: String,
+    pub size: usize,
+}
+
+pub async fn get_version_assets(reqwest: &Client , assets_index: &AssetIndex) -> Result<AssetsManifest> {
+    let received: AssetsManifest = reqwest
+        .get(assets_index.url.clone())
+        .send()
+        .await?
+        .json()
+        .await?;
+    Ok(received)
 }

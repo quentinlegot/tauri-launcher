@@ -45,6 +45,7 @@ async fn login(app: tauri::AppHandle, _window: tauri::Window, state: tauri::Stat
 
 #[tauri::command]
 async fn download(app: tauri::AppHandle, state: tauri::State<'_, Mutex<CustomState>>) -> Result<String, String> {
+    println!("starting download");
     if let Some(base_dir) = BaseDirs::new() {
         let data_folder = base_dir.data_dir().join(".altarik_test");
         let root_path = data_folder.as_path();
@@ -56,7 +57,7 @@ async fn download(app: tauri::AppHandle, state: tauri::State<'_, Mutex<CustomSta
         if game_profile.is_none() {
             return Err("You're not connected".to_string());
         }
-        let (sender,  receiver) = mpsc::channel(50);
+        let (sender,  receiver) = mpsc::channel(60);
         let opts = ClientOptions {
             authorization: game_profile.unwrap(),
             log_channel: sender.clone(),
@@ -102,7 +103,7 @@ async fn download_libraries(opts: ClientOptions<'_>) -> Result<String, String> {
 async fn read_channel(mut receiver: mpsc::Receiver<ProgressMessage>, app: tauri::AppHandle) -> Result<()> {
     loop {
         match receiver.recv().await {
-            Some(msg) => app.emit_all("progress", msg)?,
+            Some(msg) => { println!("received {:?}", msg); app.emit_all("progress", msg)? },
             None => break Ok(())
         }
     }

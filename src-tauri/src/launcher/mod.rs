@@ -9,7 +9,7 @@ use tokio::{fs, io::{AsyncWriteExt, AsyncSeekExt}, sync::mpsc};
 
 use crate::authentification::GameProfile;
 
-use self::manifest::{VersionDetail, get_version_manifest, get_version_from_manifest, get_version_detail, Library, OSName, get_version_assets};
+use self::manifest::{VersionDetail, get_version_manifest, get_version_from_manifest, get_version_detail, Library, OSName, get_version_assets, AssetsManifest};
 
 
 #[cfg(target_os="windows")]
@@ -41,6 +41,7 @@ pub struct ClientOptions<'a> {
 pub struct MinecraftClient<'a> {
     opts: &'a ClientOptions<'a>,
     details: VersionDetail,
+    assets: AssetsManifest,
     reqwest_client: Client,
 
 }
@@ -48,20 +49,23 @@ pub struct MinecraftClient<'a> {
 impl<'a> MinecraftClient<'_> {
     pub async fn new(opts: &'a ClientOptions<'a>) -> Result<MinecraftClient<'a>> {
         let reqwest_client = Client::new();
-        let details = Self::load_manifest(&reqwest_client, &opts).await?;
+        let manifest = Self::load_manifest(&reqwest_client, &opts).await?;
+        let details = manifest.0;
+        let assets = manifest.1;
         Ok(MinecraftClient {
             opts,
             reqwest_client,
             details,
+            assets,
         })
     }
 
-    async fn load_manifest(reqwest_client: &Client, opts: &ClientOptions<'a>) -> Result<VersionDetail> {
+    async fn load_manifest(reqwest_client: &Client, opts: &ClientOptions<'a>) -> Result<(VersionDetail, AssetsManifest)> {
         let manifest = get_version_manifest(&reqwest_client).await?;
         let version = get_version_from_manifest(&manifest, opts.version_number.clone(), &opts.version_type).await?;
         let details = get_version_detail(&reqwest_client, version).await?;
-        // let version_assets = get_version_assets(&details.asset_index).await?;
-        Ok(details)
+        let version_assets = get_version_assets(reqwest_client, &details.asset_index).await?;
+        Ok((details, version_assets))
     }
 
     pub async fn download_requirements(&mut self) -> Result<()> {
@@ -72,6 +76,10 @@ impl<'a> MinecraftClient<'_> {
         let lib = &self.opts.root_path.join("libraries");
         if !lib.exists() {
             fs::create_dir(lib).await?;
+        }
+        let asset = &self.opts.root_path.join("assets").join("objects");
+        if !asset.exists() {
+            fs::create_dir_all(asset).await?;
         }
         self.download_libraries(lib).await?;
         self.opts.log_channel.closed().await;
@@ -92,7 +100,7 @@ impl<'a> MinecraftClient<'_> {
             let mut file = if (&file_path).exists() {
                 let f = fs::File::open(&file_path).await;
                 match f {
-                    Ok(f) => f,
+                    Ok(mut f) => { if f.seek(std::io::SeekFrom::End(0)).await? == i.downloads.artifact.size { f } else { fs::File::create(file_path).await? } },
                     Err(err) => bail!(err),
                 }
             } else {
@@ -128,6 +136,7 @@ impl<'a> MinecraftClient<'_> {
             } else {
                 println!("{} already downloaded", i.name);
             }
+            println!("Sending message");
             self.opts.log_channel.send( ProgressMessage { p_type: "libraries".to_string(), current: progress + 1, total }).await?;
         }
         Ok(())
@@ -138,7 +147,35 @@ impl<'a> MinecraftClient<'_> {
         self.details.libraries.retain(|e| { Self::should_use_library(e) });  
     }
 
-    async fn download_assets(&mut self) -> Result<()> {
+    async fn download_assets(&mut self, object_folder: PathBuf) -> Result<()> {
+        for (_, (key, value)) in self.assets.objects.iter().enumerate() {
+            let hash = value.hash.clone();
+            let two_hex = hash.chars().take(2).collect::<String>();
+            let hex_folder = object_folder.join(&two_hex);
+            if !hex_folder.exists() {
+                fs::create_dir(&hex_folder).await?;
+            }
+            
+            let file_path = hex_folder.join(&hash);
+            let mut file = if (&file_path).exists() {
+                let f = fs::File::open(&file_path).await;
+                match f {
+                    Ok(f) => f,
+                    Err(err) => bail!(err),
+                }
+            } else {
+                fs::File::create(file_path).await?
+            };
+
+            let url = format!("https://resources.download.minecraft.net/{}/{}", two_hex, hash);
+            let received = self.reqwest_client
+                .get(url)
+                .send()
+                .await?
+                .bytes()
+                .await?;
+            
+        }
         bail!("Not yet implemented")
     }
 
