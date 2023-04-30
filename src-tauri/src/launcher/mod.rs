@@ -5,7 +5,7 @@ use std::path::{Path, self, PathBuf};
 use anyhow::{Result, bail};
 use reqwest::{Client, StatusCode};
 use serde::{Serialize, Deserialize};
-use tokio::{fs, io::{AsyncWriteExt, AsyncSeekExt}, sync::mpsc};
+use tokio::{fs::{self, File}, io::{AsyncWriteExt, AsyncSeekExt}, sync::mpsc};
 
 use crate::authentification::GameProfile;
 
@@ -82,7 +82,7 @@ impl<'a> MinecraftClient<'_> {
             fs::create_dir_all(asset).await?;
         }
         self.download_libraries(lib).await?;
-        self.opts.log_channel.closed().await;
+        self.download_assets(asset).await?;
         Ok(())
     }
 
@@ -97,15 +97,7 @@ impl<'a> MinecraftClient<'_> {
             let p = &lib.join(p);
             fs::create_dir_all(p).await?;
             let file_path = p.join(filename);
-            let mut file = if (&file_path).exists() {
-                let f = fs::File::open(&file_path).await;
-                match f {
-                    Ok(mut f) => { if f.seek(std::io::SeekFrom::End(0)).await? == i.downloads.artifact.size { f } else { fs::File::create(file_path).await? } },
-                    Err(err) => bail!(err),
-                }
-            } else {
-                fs::File::create(file_path).await?
-            };
+            let mut file = Self::select_file_option(&file_path, i.downloads.artifact.size).await?;
             
             let size = file.seek(std::io::SeekFrom::End(0)).await?;
             file.seek(std::io::SeekFrom::Start(0)).await?;
@@ -136,10 +128,21 @@ impl<'a> MinecraftClient<'_> {
             } else {
                 println!("{} already downloaded", i.name);
             }
-            println!("Sending message");
             self.opts.log_channel.send( ProgressMessage { p_type: "libraries".to_string(), current: progress + 1, total }).await?;
         }
         Ok(())
+    }
+
+    async fn select_file_option(file_path: &PathBuf, expected_size: u64) -> Result<File> {
+        if (&file_path).exists() {
+            let f = fs::File::open(&file_path).await;
+            match f {
+                Ok(mut f) => { if f.seek(std::io::SeekFrom::End(0)).await? == expected_size { Ok(f) } else { Ok(fs::File::create(file_path).await?) } },
+                Err(err) => bail!(err),
+            }
+        } else {
+            Ok(fs::File::create(file_path).await?)
+        }
     }
 
     /// Filter non necessary librairies for the current OS
@@ -147,8 +150,9 @@ impl<'a> MinecraftClient<'_> {
         self.details.libraries.retain(|e| { Self::should_use_library(e) });  
     }
 
-    async fn download_assets(&mut self, object_folder: PathBuf) -> Result<()> {
-        for (_, (key, value)) in self.assets.objects.iter().enumerate() {
+    async fn download_assets(&mut self, object_folder: &PathBuf) -> Result<()> {
+        let total: usize = self.assets.objects.len();
+        for (progress, (_, value)) in self.assets.objects.iter().enumerate() {
             let hash = value.hash.clone();
             let two_hex = hash.chars().take(2).collect::<String>();
             let hex_folder = object_folder.join(&two_hex);
@@ -157,26 +161,26 @@ impl<'a> MinecraftClient<'_> {
             }
             
             let file_path = hex_folder.join(&hash);
-            let mut file = if (&file_path).exists() {
-                let f = fs::File::open(&file_path).await;
-                match f {
-                    Ok(f) => f,
-                    Err(err) => bail!(err),
-                }
-            } else {
-                fs::File::create(file_path).await?
-            };
+            let mut file = Self::select_file_option(&file_path, value.size).await?;
+            let size = file.seek(std::io::SeekFrom::End(0)).await?;
+            file.seek(std::io::SeekFrom::Start(0)).await?;
 
-            let url = format!("https://resources.download.minecraft.net/{}/{}", two_hex, hash);
-            let received = self.reqwest_client
-                .get(url)
-                .send()
-                .await?
-                .bytes()
-                .await?;
-            
+            if size != value.size {
+                let url = format!("https://resources.download.minecraft.net/{}/{}", two_hex, hash);
+                let received = self.reqwest_client
+                    .get(url)
+                    .send()
+                    .await?
+                    .bytes()
+                    .await?;
+                file.write_all(&received).await?;
+                println!("{} downloaded", value.hash);
+            } else {
+                println!("{} already downloaded", value.hash);
+            }
+            self.opts.log_channel.send( ProgressMessage { p_type: "assets".to_string(), current: progress + 1, total }).await?;
         }
-        bail!("Not yet implemented")
+        Ok(())
     }
 
     fn should_use_library(library: &Library) -> bool {

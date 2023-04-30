@@ -64,7 +64,7 @@ pub struct VersionDetail {
 
 #[derive(Serialize, Deserialize)]
 pub struct AssetIndex {
-    pub id: i32,
+    pub id: String,
     pub sha1: String,
     pub size: usize,
     #[serde(rename(serialize = "totalSize", deserialize = "totalSize"))]
@@ -130,7 +130,7 @@ pub struct AssetsManifest {
 #[derive(Serialize, Deserialize)]
 pub struct AssetObject {
     pub hash: String,
-    pub size: usize,
+    pub size: u64,
 }
 
 pub async fn get_version_assets(reqwest: &Client , assets_index: &AssetIndex) -> Result<AssetsManifest> {

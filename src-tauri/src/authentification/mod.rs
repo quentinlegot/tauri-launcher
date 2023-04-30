@@ -123,7 +123,6 @@ impl Authentification {
             received = listener => {
                 match received {
                     Ok(received) => {
-                        println!("received code");
                         second_window.close()?;
                         
                         if received.state != state {
@@ -137,7 +136,6 @@ impl Authentification {
                 }
             },
             _ = receiver.recv() => {
-                println!("window closed");
                 bail!("You closed the window before completion")
             }
         }

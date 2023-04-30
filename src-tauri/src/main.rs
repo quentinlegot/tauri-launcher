@@ -45,7 +45,6 @@ async fn login(app: tauri::AppHandle, _window: tauri::Window, state: tauri::Stat
 
 #[tauri::command]
 async fn download(app: tauri::AppHandle, state: tauri::State<'_, Mutex<CustomState>>) -> Result<String, String> {
-    println!("starting download");
     if let Some(base_dir) = BaseDirs::new() {
         let data_folder = base_dir.data_dir().join(".altarik_test");
         let root_path = data_folder.as_path();
@@ -71,10 +70,8 @@ async fn download(app: tauri::AppHandle, state: tauri::State<'_, Mutex<CustomSta
         let res = tokio::join!(
             download_libraries(opts),
             read_channel(receiver, app),
-
         );
         res.0
-        
     } else {
         Err("Cannot download files".to_string())
     }
@@ -83,7 +80,7 @@ async fn download(app: tauri::AppHandle, state: tauri::State<'_, Mutex<CustomSta
 
 async fn download_libraries(opts: ClientOptions<'_>) -> Result<String, String> {
     let client = MinecraftClient::new(&opts).await;
-    match client {
+    let res = match client {
         Ok(mut client) => {
             match client.download_requirements().await {
                 Ok(_) => {
@@ -97,13 +94,16 @@ async fn download_libraries(opts: ClientOptions<'_>) -> Result<String, String> {
         Err(err) => {
             Err(err.to_string())
         }
-    }
+    };
+    opts.log_channel.closed().await;
+    res
+    
 }
 
 async fn read_channel(mut receiver: mpsc::Receiver<ProgressMessage>, app: tauri::AppHandle) -> Result<()> {
     loop {
         match receiver.recv().await {
-            Some(msg) => { println!("received {:?}", msg); app.emit_all("progress", msg)? },
+            Some(msg) => { app.emit_all("progress", msg)? },
             None => break Ok(())
         }
     }
