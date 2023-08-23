@@ -49,7 +49,9 @@ pub struct VersionDetail {
     arguments: Map<String, Value>,
     #[serde(rename(serialize = "assetIndex", deserialize = "assetIndex"))]
     pub asset_index: AssetIndex,
-    assets: String,
+    pub assets: String,
+    #[serde(rename(serialize = "complianceLevel", deserialize = "complianceLevel"))]
+    compliance_level: i32,
     downloads: Map<String, Value>,
     id: String,
     #[serde(rename(serialize = "javaVersion", deserialize = "javaVersion"))]

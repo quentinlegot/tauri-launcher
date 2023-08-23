@@ -67,22 +67,49 @@ impl<'a> MinecraftClient<'_> {
         let version_assets = get_version_assets(reqwest_client, &details.asset_index).await?;
         Ok((details, version_assets))
     }
+    
+    async fn create_dirs(&self) -> Result<()> {
+        let folders = vec![
+            self.opts.root_path.join("libraries"),
+            self.opts.root_path.join("assets").join("objects"),
+            self.opts.root_path.join("assets").join("indexes")
+            ];
+        let mut tasks = Vec::with_capacity(folders.len());
+        for folder in folders {
+            if !folder.exists() {
+                tasks.push(tokio::spawn(async { fs::create_dir(folder).await }));
+            }
+        }
+        for task in tasks {
+            let _ = task.await?;
+        }
+        Ok(())
+    }
+
+    async fn save_version_index(&self) -> Result<()> {
+        let indexes = &self.opts.root_path.join("assets").join("indexes");
+        let mut filename = self.details.assets.clone();
+        filename.push_str(".json");
+        let filepath = indexes.join(filename);
+        let file = File::create(filepath).await;
+        match file {
+            Ok(mut f) => {
+                f.write_all(serde_json::to_string(&self.details)?.as_bytes()).await?;
+                Ok(())
+            },
+            Err(err) => bail!(err),
+        }
+    }
 
     pub async fn download_requirements(&mut self) -> Result<()> {
         // create root folder if it doesn't exist
-        if !self.opts.root_path.exists() {
-            fs::create_dir_all(self.opts.root_path).await?;
-        }
+        self.create_dirs().await?;
         let lib = &self.opts.root_path.join("libraries");
-        if !lib.exists() {
-            fs::create_dir(lib).await?;
-        }
         let asset = &self.opts.root_path.join("assets").join("objects");
-        if !asset.exists() {
-            fs::create_dir_all(asset).await?;
-        }
+        self.save_version_index().await?;
         self.download_libraries(lib).await?;
         self.download_assets(asset).await?;
+        self.opts.log_channel.send(ProgressMessage { p_type: "completed".to_string(), current: 0, total: 0 }).await?;
         Ok(())
     }
 
@@ -202,6 +229,10 @@ impl<'a> MinecraftClient<'_> {
                 true
             }
         }
+    }
+
+    pub fn launch_game(&self) {
+        // TODO
     }
     
 }
