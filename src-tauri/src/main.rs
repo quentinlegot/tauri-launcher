@@ -16,7 +16,7 @@ use reqwest::Client;
 use tauri::Manager;
 use tokio::sync::mpsc;
 
-struct CustomState (Option<GameProfile>);
+struct CustomState (Option<GameProfile>, Option<AltarikManifest>);
 
 #[tauri::command]
 async fn login(app: tauri::AppHandle, _window: tauri::Window, state: tauri::State<'_, Mutex<CustomState>>) -> Result<String, String> {
@@ -39,14 +39,14 @@ async fn login(app: tauri::AppHandle, _window: tauri::Window, state: tauri::Stat
 }
 
 #[tauri::command]
-async fn load_altarik_manifest(state: tauri::State<'_, Mutex<Option<AltarikManifest>>>) -> Result<AltarikManifest, String> {
+async fn load_altarik_manifest(state: tauri::State<'_, Mutex<CustomState>>) -> Result<AltarikManifest, String> {
     let reqwest_client = Client::new();
     let altarik_manifest = AltarikManifest::get_altarik_manifest(&reqwest_client).await;
     match altarik_manifest {
         Ok(val) => {
             match state.lock() {
                 Ok(mut global_manifest) => {
-                    let _ = global_manifest.insert(val.clone());
+                    let _ = global_manifest.1.insert(val.clone());
                     Ok(val)
                 },
                 Err(err) => {
@@ -62,7 +62,7 @@ async fn load_altarik_manifest(state: tauri::State<'_, Mutex<Option<AltarikManif
 }
 
 #[tauri::command]
-async fn download(app: tauri::AppHandle, state: tauri::State<'_, Mutex<CustomState>>) -> Result<String, String> {
+async fn download(game_version: String, app: tauri::AppHandle, state: tauri::State<'_, Mutex<CustomState>>) -> Result<String, String> {
     if let Some(base_dir) = BaseDirs::new() {
         let data_folder = base_dir.data_dir().join(".altarik_test");
         let root_path = data_folder.as_path();
@@ -80,7 +80,7 @@ async fn download(app: tauri::AppHandle, state: tauri::State<'_, Mutex<CustomSta
             log_channel: sender.clone(),
             root_path,
             java_path: &java_path.as_path(),
-            version_number: "1.19.3".to_string(),
+            version_number: game_version,
             version_type: launcher::VersionType::Release,
             memory_min: "2G".to_string(),
             memory_max: "4G".to_string(),
@@ -129,7 +129,7 @@ async fn read_channel(mut receiver: mpsc::Receiver<ProgressMessage>, app: tauri:
 #[tokio::main]
 async fn main() {
     tauri::Builder::default()
-        .manage(Mutex::new(CustomState(None)))
+        .manage(Mutex::new(CustomState(None, None)))
         .invoke_handler(tauri::generate_handler![login, download, load_altarik_manifest])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

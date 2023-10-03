@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react"
 import { invoke, event } from "@tauri-apps/api";
+import { AltarikManifest } from "../models/manifest/AltarikManifest";
+import AltarikManifestComponent from "./AltarikManifestComponent";
 
 interface ProgressMessage {
     p_type: String,
@@ -14,6 +16,8 @@ export default function LoginPage() {
     const [greetMessage, setGreetMessage] = useState<String>("");
     const [isLogged, setIsLogged] = useState<boolean>(false);
     const [loginButtonDisabled, setLoginButtonDisabled] = useState<boolean>(false);
+    const [altarikManifest, setAltarikManifest] = useState<AltarikManifest>();
+    const [selectedChapter, setSelectChapter] = useState<number>(-1);
 
     useEffect(() => {
         event.listen('progress', (e) => {
@@ -21,8 +25,19 @@ export default function LoginPage() {
             setGreetMessage("{type: " + v.p_type + ", current: " + v.current + ", total: " + v.total + "}");
             // setGreetMessage(String(e.payload));
         });
-        
     }, [])
+
+    useEffect(() => {
+        if(isLogged) {
+            invoke('load_altarik_manifest', {}).then(val => {
+                setAltarikManifest(val as AltarikManifest)
+            }).catch(err => {
+                setGreetMessage("Cannot load altarik manifest: " + err)
+            })
+        } else {
+            setAltarikManifest(undefined)
+        }
+    }, [isLogged])
 
     async function login () {
         if(!isLogged && !loginButtonDisabled) {
@@ -39,14 +54,21 @@ export default function LoginPage() {
 
     async function download() {
         if(isLogged) {
-            invoke("download", {}).then(value => {
-                setGreetMessage(String(value))
-                // this.greet_message = value
-        }).catch(err => {
-            console.log("An error occured")
-            setGreetMessage("Error: " + err)
-        })
+            if(selectedChapter !== -1 && altarikManifest !== undefined) {
+                invoke("download", { gameVersion: altarikManifest?.chapters[selectedChapter].minecraftVersion }).then(value => {
+                    setGreetMessage(String(value))
+                }).catch(err => {
+                    console.log("An error occured")
+                    setGreetMessage("Error: " + err)
+                })
+            } else {
+                setGreetMessage("Please select a chapter first")
+            }
       }
+    }
+
+    async function select_chapter(key: number) {
+        setSelectChapter(key)
     }
 
     return (
@@ -60,6 +82,9 @@ export default function LoginPage() {
         </div>
 
         <p id="greet-msg">{ greetMessage }</p>
+
+        <hr />
+        <AltarikManifestComponent manifest={altarikManifest} selectedChapter={selectedChapter} onClickFunction={select_chapter} />
     </>
     )
 
