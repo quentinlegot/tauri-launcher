@@ -1,4 +1,5 @@
 mod manifest;
+pub mod altarik;
 
 use std::path::{Path, self, PathBuf};
 

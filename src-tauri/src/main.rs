@@ -11,17 +11,12 @@ use std::sync::Mutex;
 use authentification::{Authentification, Prompt, GameProfile};
 use anyhow::Result;
 use directories::BaseDirs;
-use launcher::{MinecraftClient, ClientOptions, ProgressMessage};
+use launcher::{MinecraftClient, ClientOptions, ProgressMessage, altarik::AltarikManifest};
+use reqwest::Client;
 use tauri::Manager;
 use tokio::sync::mpsc;
 
 struct CustomState (Option<GameProfile>);
-
-// Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
 
 #[tauri::command]
 async fn login(app: tauri::AppHandle, _window: tauri::Window, state: tauri::State<'_, Mutex<CustomState>>) -> Result<String, String> {
@@ -41,6 +36,29 @@ async fn login(app: tauri::AppHandle, _window: tauri::Window, state: tauri::Stat
         },
         Err(err) => Err(err.to_string())
     }
+}
+
+#[tauri::command]
+async fn load_altarik_manifest(state: tauri::State<'_, Mutex<Option<AltarikManifest>>>) -> Result<AltarikManifest, String> {
+    let reqwest_client = Client::new();
+    let altarik_manifest = AltarikManifest::get_altarik_manifest(&reqwest_client).await;
+    match altarik_manifest {
+        Ok(val) => {
+            match state.lock() {
+                Ok(mut global_manifest) => {
+                    let _ = global_manifest.insert(val.clone());
+                    Ok(val)
+                },
+                Err(err) => {
+                    Err(err.to_string())
+                }
+            }
+        },
+        Err(err) => {
+            Err(err.to_string())
+        }
+    }
+    
 }
 
 #[tauri::command]
@@ -113,7 +131,7 @@ async fn read_channel(mut receiver: mpsc::Receiver<ProgressMessage>, app: tauri:
 async fn main() {
     tauri::Builder::default()
         .manage(Mutex::new(CustomState(None)))
-        .invoke_handler(tauri::generate_handler![greet, login, download])
+        .invoke_handler(tauri::generate_handler![login, download, load_altarik_manifest])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
