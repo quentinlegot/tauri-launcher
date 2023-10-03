@@ -80,11 +80,12 @@ async fn download(app: tauri::AppHandle, state: tauri::State<'_, Mutex<CustomSta
             log_channel: sender.clone(),
             root_path,
             java_path: &java_path.as_path(),
-            version_number: "1.19.4".to_string(),
+            version_number: "1.19.3".to_string(),
             version_type: launcher::VersionType::Release,
             memory_min: "2G".to_string(),
             memory_max: "4G".to_string(),
         };
+        drop(sender);
         let res = tokio::join!(
             download_libraries(opts),
             read_channel(receiver, app),
@@ -113,9 +114,7 @@ async fn download_libraries(opts: ClientOptions<'_>) -> Result<String, String> {
             Err(err.to_string())
         }
     };
-    opts.log_channel.closed().await;
     res
-    
 }
 
 async fn read_channel(mut receiver: mpsc::Receiver<ProgressMessage>, app: tauri::AppHandle) -> Result<()> {

@@ -78,7 +78,7 @@ impl<'a> MinecraftClient<'_> {
         let mut tasks = Vec::with_capacity(folders.len());
         for folder in folders {
             if !folder.exists() {
-                tasks.push(tokio::spawn(async { fs::create_dir(folder).await }));
+                tasks.push(tokio::spawn(async { fs::create_dir_all(folder).await }));
             }
         }
         for task in tasks {
