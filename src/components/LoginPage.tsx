@@ -55,7 +55,7 @@ export default function LoginPage() {
     async function download() {
         if(isLogged) {
             if(selectedChapter !== -1 && altarikManifest !== undefined) {
-                invoke("download", { gameVersion: altarikManifest?.chapters[selectedChapter].minecraftVersion }).then(value => {
+                invoke("download", { selectedChapter: selectedChapter }).then(value => {
                     setGreetMessage(String(value))
                 }).catch(err => {
                     console.log("An error occured")

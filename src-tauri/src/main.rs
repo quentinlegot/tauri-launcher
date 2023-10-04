@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use authentification::{Authentification, Prompt, GameProfile};
 use anyhow::Result;
 use directories::BaseDirs;
-use launcher::{MinecraftClient, ClientOptions, ProgressMessage, altarik::AltarikManifest};
+use launcher::{MinecraftClient, ClientOptions, ProgressMessage, altarik::{AltarikManifest, Chapter}};
 use reqwest::Client;
 use tauri::Manager;
 use tokio::sync::mpsc;
@@ -62,7 +62,23 @@ async fn load_altarik_manifest(state: tauri::State<'_, Mutex<CustomState>>) -> R
 }
 
 #[tauri::command]
-async fn download(game_version: String, app: tauri::AppHandle, state: tauri::State<'_, Mutex<CustomState>>) -> Result<String, String> {
+async fn download(selected_chapter: usize, app: tauri::AppHandle, state: tauri::State<'_, Mutex<CustomState>>) -> Result<String, String> {
+    let chapter = match state.lock() {
+        Ok(lock) => {
+            match &lock.1 {
+                Some(manifest) => {
+                    match manifest.chapters.get(selected_chapter) {
+                        Some(val) => {
+                            val.clone()
+                        },
+                        None => return Err("Selected chapter doesn't exist".to_string())
+                    }
+                },
+                None => return Err("Cannot load altarik manifest".to_string())
+            }
+        },
+        Err(err) => return Err(err.to_string())
+    };
     if let Some(base_dir) = BaseDirs::new() {
         let data_folder = base_dir.data_dir().join(".altarik_test");
         let root_path = data_folder.as_path();
@@ -80,14 +96,14 @@ async fn download(game_version: String, app: tauri::AppHandle, state: tauri::Sta
             log_channel: sender.clone(),
             root_path,
             java_path: &java_path.as_path(),
-            version_number: game_version,
+            version_number: chapter.minecraft_version.clone(),
             version_type: launcher::VersionType::Release,
             memory_min: "2G".to_string(),
             memory_max: "4G".to_string(),
         };
         drop(sender);
         let res = tokio::join!(
-            download_libraries(opts),
+            download_libraries(opts, chapter),
             read_channel(receiver, app),
         );
         res.0
@@ -97,11 +113,11 @@ async fn download(game_version: String, app: tauri::AppHandle, state: tauri::Sta
 }
 
 
-async fn download_libraries(opts: ClientOptions<'_>) -> Result<String, String> {
+async fn download_libraries(opts: ClientOptions<'_>, chapter: Chapter) -> Result<String, String> {
     let client = MinecraftClient::new(&opts).await;
     let res = match client {
         Ok(mut client) => {
-            match client.download_requirements().await {
+            match client.download_requirements(chapter).await {
                 Ok(_) => {
                     Ok("Content downloaded".to_string())
                 },

@@ -26,6 +26,7 @@ warp = "0.3.3"
 anyhow = "1.0.66"
 rand = "0.8.5"
 directories = "5.0.0"
+sha256 = "1.4.0"
 
 [features]
 # by default Tauri runs in production mode

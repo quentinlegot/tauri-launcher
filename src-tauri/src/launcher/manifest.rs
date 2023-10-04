@@ -106,6 +106,7 @@ pub enum OSName {
     Windows
 }
 
+
 #[derive(Serialize, Deserialize)]
 pub struct LibraryArtifact {
     pub path: String,

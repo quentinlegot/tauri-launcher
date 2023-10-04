@@ -6,11 +6,11 @@ use std::path::{Path, self, PathBuf};
 use anyhow::{Result, bail};
 use reqwest::{Client, StatusCode};
 use serde::{Serialize, Deserialize};
-use tokio::{fs::{self, File}, io::{AsyncWriteExt, AsyncSeekExt}, sync::mpsc};
+use tokio::{fs::{self, File, OpenOptions}, io::{AsyncWriteExt, AsyncSeekExt}, sync::mpsc};
 
 use crate::authentification::GameProfile;
 
-use self::manifest::{VersionDetail, get_version_manifest, get_version_from_manifest, get_version_detail, Library, OSName, get_version_assets, AssetsManifest};
+use self::{manifest::{VersionDetail, get_version_manifest, get_version_from_manifest, get_version_detail, Library, OSName, get_version_assets, AssetsManifest}, altarik::Chapter};
 
 
 #[cfg(target_os="windows")]
@@ -19,6 +19,9 @@ const ACTUAL_OS: OSName = OSName::Windows;
 const ACTUAL_OS: OSName = OSName::Linux;
 #[cfg(target_os="macos")]
 const ACTUAL_OS: OSName = OSName::MacOsX;
+
+#[cfg(not(any(target_arch="x86_64", target_arch="x86")))]
+compile_error!("Your architecture is not supported");
 
 #[derive(Clone, serde::Serialize, Debug)]
 pub struct ProgressMessage {
@@ -32,6 +35,7 @@ pub struct ClientOptions<'a> {
     pub log_channel: mpsc::Sender<ProgressMessage>,
     pub root_path: &'a Path,
     pub java_path: &'a Path,
+    /// deprecated, will be remove
     pub version_number: String,
     pub version_type: VersionType,
     // version_custom: String, // for a next update
@@ -73,7 +77,8 @@ impl<'a> MinecraftClient<'_> {
         let folders = vec![
             self.opts.root_path.join("libraries"),
             self.opts.root_path.join("assets").join("objects"),
-            self.opts.root_path.join("assets").join("indexes")
+            self.opts.root_path.join("assets").join("indexes"),
+            self.opts.root_path.join("runtime").join("download"),
             ];
         let mut tasks = Vec::with_capacity(folders.len());
         for folder in folders {
@@ -102,15 +107,70 @@ impl<'a> MinecraftClient<'_> {
         }
     }
 
-    pub async fn download_requirements(&mut self) -> Result<()> {
+    pub async fn download_requirements(&mut self, chapter: Chapter) -> Result<()> {
         // create root folder if it doesn't exist
         self.create_dirs().await?;
         let lib = &self.opts.root_path.join("libraries");
         let asset = &self.opts.root_path.join("assets").join("objects");
         self.save_version_index().await?;
+        self.download_java(chapter).await?;
         self.download_libraries(lib).await?;
         self.download_assets(asset).await?;
         self.opts.log_channel.send(ProgressMessage { p_type: "completed".to_string(), current: 0, total: 0 }).await?;
+        Ok(())
+    }
+
+    async fn download_java(&mut self, chapter: Chapter) -> Result<()> {
+        let download_path = self.opts.root_path.join("runtime").join("download");
+        // let extract_path = self.opts.root_path.join("runtime");
+        let (url, extension) = match ACTUAL_OS {
+            OSName::Linux => {
+                (chapter.java.platform.linux, "tar.gz")
+            },
+            OSName::Windows => {
+                (chapter.java.platform.win32, "zip")
+            },
+            _ => {
+                bail!("Your current is not supported")
+            }
+        };
+        let url = match url {
+            Some(url) => url,
+            None => bail!("No available executable available for your platform")
+        };
+
+        let filepath = download_path.join(format!("{}.{}", url.x64.name.clone(), extension));
+        let mut should_download = false;
+        if !filepath.exists() {
+            should_download = true;
+        } else {
+            let hash = sha256::try_digest(filepath.clone());
+            match hash {
+                Ok(hash) => {
+                    if hash != url.x64.sha256sum {
+                        println!("Hash of java archive is not correct, redownloading");
+                        should_download = true;
+                    }
+                },
+                Err(_) => should_download = true
+            }
+        }
+        if should_download {
+            println!("Downloading java");
+            if filepath.exists() {
+                fs::remove_file(filepath.clone()).await?; // remove content before writing and appending to it
+            }
+            let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(filepath)
+            .await?;
+            let b = self.reqwest_client.get(url.x64.link.clone()).send().await?.bytes().await?;
+            file.write(&b).await?;
+            println!("{} downloaded", url.x64.name)
+        } else {
+            println!("{} already downloaded", url.x64.name)
+        }
         Ok(())
     }
 
