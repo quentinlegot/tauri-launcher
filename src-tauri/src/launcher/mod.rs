@@ -79,7 +79,8 @@ impl<'a> MinecraftClient<'_> {
             self.opts.root_path.join("assets").join("objects"),
             self.opts.root_path.join("assets").join("indexes"),
             self.opts.root_path.join("runtime").join("download"),
-            ];
+            self.opts.root_path.join("mods")
+        ];
         let mut tasks = Vec::with_capacity(folders.len());
         for folder in folders {
             if !folder.exists() {
@@ -112,9 +113,14 @@ impl<'a> MinecraftClient<'_> {
         self.create_dirs().await?;
         let lib = &self.opts.root_path.join("libraries");
         let asset = &self.opts.root_path.join("assets").join("objects");
+        let modpack = &self.opts.root_path.join("modpack").join(chapter.title);
+        if !modpack.exists() {
+            fs::create_dir_all(modpack).await?;
+        }
         self.save_version_index().await?;
         chapter.java.platform.download_java(self.opts.root_path, &self.reqwest_client, self.opts.log_channel.clone()).await?;
-        chapter.java.platform.extract_java(self.opts.root_path).await?;
+        chapter.java.platform.extract_java(self.opts.root_path, self.opts.log_channel.clone()).await?;
+        chapter.modspack.download_mods(&self.reqwest_client, modpack.to_path_buf(), self.opts.log_channel.clone()).await?;
         self.download_libraries(lib).await?;
         self.download_assets(asset).await?;
         self.opts.log_channel.send(ProgressMessage { p_type: "completed".to_string(), current: 0, total: 0 }).await?;

@@ -30,6 +30,7 @@ sha256 = "1.4.0"
 tokio-tar = "0.3.1"
 async_zip = { version = "0.0.15", features = ["full"] }
 tokio-stream = "0.1.14"
+sha1 = "0.10.6"
 
 [features]
 # by default Tauri runs in production mode

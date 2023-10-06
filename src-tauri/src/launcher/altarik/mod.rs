@@ -1,10 +1,11 @@
 use std::path::{PathBuf, Path};
 
-use anyhow::{Result, bail};
+use anyhow::{Result, bail, anyhow};
 use reqwest::Client;
 use serde::{Serialize, Deserialize};
 use async_zip::base::read::seek::ZipFileReader;
-use tokio::{fs::{OpenOptions, File, self}, sync::mpsc,  io::AsyncWriteExt};
+use sha1::{Digest, Sha1};
+use tokio::{fs::{OpenOptions, File, self}, sync::mpsc,  io::{AsyncWriteExt, AsyncReadExt}};
 use tokio_tar::Archive;
 use tokio_stream::StreamExt;
 
@@ -86,15 +87,9 @@ impl JavaPlatform {
     pub async fn download_java(&self, root_path: &Path, reqwest: &Client, log_channel: mpsc::Sender<ProgressMessage>) -> Result<()> {
         let download_path = root_path.join("runtime").join("download");
         let (url, extension) = match ACTUAL_OS {
-            OSName::Linux => {
-                (self.linux.clone(), "tar.gz")
-            },
-            OSName::Windows => {
-                (self.win32.clone(), "zip")
-            },
-            _ => {
-                bail!("Your current is not supported")
-            }
+            OSName::Linux => (self.linux.clone(), "tar.gz"),
+            OSName::Windows => (self.win32.clone(), "zip"),
+            _ => bail!("Your current is not supported")
         };
         let url = match url {
             Some(url) => url,
@@ -148,7 +143,7 @@ impl JavaPlatform {
         Ok(())
     }
 
-    pub async fn extract_java(&self, root_path: &Path) -> Result<()> {
+    pub async fn extract_java(&self, root_path: &Path, log_channel: mpsc::Sender<ProgressMessage>) -> Result<()> {
         let (url, extension) = match ACTUAL_OS {
             OSName::Linux => {
                 (self.linux.clone(), "tar.gz")
@@ -166,10 +161,7 @@ impl JavaPlatform {
         };
         let archive_path = root_path.join("runtime").join("download").join(format!("{}.{}", url.x64.name, extension));
         let extract_path = root_path.join("runtime");
-        // if !extract_path.exists() {
-        //     fs::create_dir(extract_path.clone()).await?;
-        // }
-        extract_zip(archive_path, extract_path).await?;
+        extract_zip(archive_path, extract_path, log_channel).await?;
 
         Ok(())
     }
@@ -179,14 +171,57 @@ impl JavaPlatform {
 impl ModsPack {
 
 
-    pub async fn download_mods() {
-        // TODO
+    pub async fn download_mods(&self, reqwest: &Client, modpack_dir: PathBuf, log_channel: mpsc::Sender<ProgressMessage>) -> Result<()> {
+        for index in 0..self.mods.len() {
+            log_channel.send(ProgressMessage { p_type: "mods".to_string(), current: index, total: self.mods.len() }).await?;
+            let mod_url = self.mods.get(index).ok_or(anyhow!("Cannot get mod download link"))?;
+            let sha1 = self.sha1sum.get(index).ok_or(anyhow!("Cannot verify mod integrity"))?;
+            let filepath = modpack_dir.join(format!("modpack{}.zip", index));
+            let should_download = self.should_download_mod(&sha1, &filepath).await?;
+            if should_download {
+                println!("Need to download mod {}", mod_url);
+                let mut res = reqwest.get(mod_url)
+                .send()
+                .await?;
+                let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .append(true)
+                .open(filepath)
+                .await?;
+                while let Some(chunk) = res.chunk().await? {
+                    file.write_all(&chunk).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn should_download_mod(&self, mod_sha1: &&String, filepath: &PathBuf) -> Result<bool> {
+        if filepath.exists() {
+            let mut hasher = Sha1::new();
+            let mut file = File::open(filepath).await?;
+            let mut content = Vec::new();
+            file.read(&mut content).await?;
+            hasher.update(content);
+            let hash = hasher.finalize();
+            // let b16 = base16ct::upper::encode_string(hash);
+            if &&format!("{:x}", &hash.clone()) != mod_sha1 {
+                println!("Correct: {:?}, current: {:X}", mod_sha1, hash);
+                fs::remove_file(filepath).await?;
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        } else {
+            Ok(true)
+        }
     }
 
     
 }
 
-async fn extract_targz(archive_path: PathBuf, extract_path: PathBuf) -> Result<()> {
+async fn extract_targz(archive_path: PathBuf, extract_path: PathBuf, log_channel: mpsc::Sender<ProgressMessage>) -> Result<()> {
     let file = File::open(archive_path.clone()).await?;
     let mut archive = Archive::new(file);
     let mut entries = archive.entries()?;
@@ -194,24 +229,27 @@ async fn extract_targz(archive_path: PathBuf, extract_path: PathBuf) -> Result<(
         let file = entry?;
         println!("{:?}", archive_path);
         println!("{}", file.path()?.to_string_lossy().to_string());
+        // TODO when I'll be on a linux
     }
     Ok(())
 }
 
-async fn extract_zip(archive_path: PathBuf, extract_path: PathBuf) -> Result<()> {
+async fn extract_zip(archive_path: PathBuf, extract_path: PathBuf, log_channel: mpsc::Sender<ProgressMessage>) -> Result<()> {
     // TODO add log_channel to send progression to user
     let file = File::open(archive_path.clone()).await?;
     let mut reader = ZipFileReader::with_tokio(file).await?;
+    let total = reader.file().entries().len();
     for index in 0..reader.file().entries().len() {
         if let Some(entry) = reader.file().entries().get(index) {
             let entry = entry.entry();
-            // println!("{}", entry.filename().as_str()?);
             let filename = entry.filename().as_str()?;
             let path = extract_path.join(filename);
+            log_channel.send(ProgressMessage { p_type: "extract".to_string(), current: index + 1, total: total }).await?;
             if entry.dir()? {
-                if !path.exists() {
-                    fs::create_dir_all(path).await?;
+                if path.exists() {
+                    fs::remove_dir_all(path.clone()).await?; // clear folder before continue, avoid injection
                 }
+                fs::create_dir_all(path).await?; // recreating the folder then
             } else {
                 let mut entry_reader = reader.reader_with_entry(index).await?;
                 if path.exists() {
