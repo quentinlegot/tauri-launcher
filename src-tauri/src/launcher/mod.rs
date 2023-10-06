@@ -3,14 +3,14 @@ pub mod altarik;
 
 use std::path::{Path, self, PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::{Result, bail, anyhow};
 use reqwest::{Client, StatusCode};
 use serde::{Serialize, Deserialize};
 use tokio::{fs::{self, File}, io::{AsyncWriteExt, AsyncSeekExt}, sync::mpsc};
 
 use crate::authentification::GameProfile;
 
-use self::{manifest::{VersionDetail, get_version_manifest, get_version_from_manifest, get_version_detail, Library, OSName, get_version_assets, AssetsManifest}, altarik::Chapter};
+use self::{manifest::{VersionDetail, get_version_manifest, get_version_from_manifest, get_version_detail, Library, OSName, get_version_assets, AssetsManifest}, altarik::{Chapter, custom_version_manifest::CustomVersionManifest}};
 
 
 #[cfg(target_os="windows")]
@@ -46,13 +46,15 @@ pub struct ClientOptions<'a> {
 pub struct MinecraftClient<'a> {
     opts: &'a ClientOptions<'a>,
     details: VersionDetail,
+    custom_details: Option<CustomVersionManifest>,
     assets: AssetsManifest,
     reqwest_client: Client,
+    chapter: Chapter,
 
 }
 
 impl<'a> MinecraftClient<'_> {
-    pub async fn new(opts: &'a ClientOptions<'a>) -> Result<MinecraftClient<'a>> {
+    pub async fn new(opts: &'a ClientOptions<'a>, chapter: Chapter) -> Result<MinecraftClient<'a>> {
         let reqwest_client = Client::new();
         let manifest = Self::load_manifest(&reqwest_client, &opts).await?;
         let details = manifest.0;
@@ -61,7 +63,9 @@ impl<'a> MinecraftClient<'_> {
             opts,
             reqwest_client,
             details,
+            custom_details: None,
             assets,
+            chapter
         })
     }
 
@@ -108,20 +112,23 @@ impl<'a> MinecraftClient<'_> {
         }
     }
 
-    pub async fn download_requirements(&mut self, chapter: Chapter) -> Result<()> {
+    pub async fn download_requirements(&mut self) -> Result<()> {
         // create root folder if it doesn't exist
         self.create_dirs().await?;
         let lib = &self.opts.root_path.join("libraries");
         let asset = &self.opts.root_path.join("assets").join("objects");
-        let modpack = &self.opts.root_path.join("modpack").join(chapter.title);
+        let modpack = &self.opts.root_path.join("modpack").join(self.chapter.title.clone());
         if !modpack.exists() {
             fs::create_dir_all(modpack).await?;
         }
+        self.clear_folder().await?;
         self.save_version_index().await?;
-        chapter.java.platform.download_java(self.opts.root_path, &self.reqwest_client, self.opts.log_channel.clone()).await?;
-        chapter.java.platform.extract_java(self.opts.root_path, self.opts.log_channel.clone()).await?;
-        chapter.modspack.download_mods(&self.reqwest_client, modpack.to_path_buf(), self.opts.log_channel.clone()).await?;
+        self.chapter.java.platform.download_java(self.opts.root_path, &self.reqwest_client, self.opts.log_channel.clone()).await?;
+        self.chapter.java.platform.extract_java(self.opts.root_path).await?;
+        self.chapter.modspack.download_mods(&self.reqwest_client, modpack, &self.opts.root_path.to_path_buf(), self.opts.log_channel.clone()).await?;
+        self.custom_details = Some(self.chapter.get_custom_version_detail_manifest(&self.opts.root_path.join("versions")).await?);
         self.download_libraries(lib).await?;
+        self.download_custom_libraries(lib).await?;
         self.download_assets(asset).await?;
         self.opts.log_channel.send(ProgressMessage { p_type: "completed".to_string(), current: 0, total: 0 }).await?;
         Ok(())
@@ -131,6 +138,7 @@ impl<'a> MinecraftClient<'_> {
         self.filter_non_necessary_librairies();
         let total = self.details.libraries.len();
         for (progress, i) in self.details.libraries.iter().enumerate() {
+            
             let p = i.downloads.artifact.path.clone();
             let mut splited = p.split("/").collect::<Vec<&str>>();
             let filename = splited.pop().ok_or(anyhow::anyhow!("Invalid filename"))?; // remove last element
@@ -174,6 +182,24 @@ impl<'a> MinecraftClient<'_> {
         Ok(())
     }
 
+    async fn download_custom_libraries(&self, lib_dir: &PathBuf) -> Result<()> {
+        if let Some(custom) = &self.custom_details {
+            for i in &custom.libraries {
+                
+            }
+        }
+        Ok(())
+    }
+
+    /// delete and recreate some folder, in particular mods and version folder
+    async fn clear_folder(&self) -> Result<()> {
+        for i in [self.opts.root_path.join("mods"), self.opts.root_path.join("versions")] {
+            fs::remove_dir_all(&i).await?;
+            fs::create_dir_all(&i).await?;
+        }
+        Ok(())
+    }
+
     async fn select_file_option(file_path: &PathBuf, expected_size: u64) -> Result<File> {
         if (&file_path).exists() {
             let f = fs::File::open(&file_path).await;
@@ -188,7 +214,7 @@ impl<'a> MinecraftClient<'_> {
 
     /// Filter non necessary librairies for the current OS
     fn filter_non_necessary_librairies(&mut self) {
-        self.details.libraries.retain(|e| { Self::should_use_library(e) });  
+        self.details.libraries.retain(|e| { Self::should_use_library(e) });
     }
 
     async fn download_assets(&mut self, object_folder: &PathBuf) -> Result<()> {
@@ -216,9 +242,9 @@ impl<'a> MinecraftClient<'_> {
                     .await?;
                 file.write_all(&received).await?;
                 println!("{} downloaded", value.hash);
-            } else {
-                println!("{} already downloaded", value.hash);
-            }
+            } // else {
+            //     println!("{} already downloaded", value.hash);
+            // }
             self.opts.log_channel.send( ProgressMessage { p_type: "assets".to_string(), current: progress + 1, total }).await?;
         }
         Ok(())

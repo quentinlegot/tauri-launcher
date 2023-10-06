@@ -1,3 +1,5 @@
+pub mod custom_version_manifest;
+
 use std::path::{PathBuf, Path};
 
 use anyhow::{Result, bail, anyhow};
@@ -11,7 +13,9 @@ use tokio_stream::StreamExt;
 
 use crate::launcher::ProgressMessage;
 
-use super::{ACTUAL_OS, manifest::OSName};
+use self::custom_version_manifest::CustomVersionManifest;
+
+use super::{ACTUAL_OS, manifest::{OSName, VersionDetail}};
 
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -78,7 +82,13 @@ impl AltarikManifest {
 
 impl Chapter {
 
-    
+    pub async fn get_custom_version_detail_manifest(&self, version_dir: &PathBuf) -> Result<CustomVersionManifest> {
+        let filepath = version_dir.join(self.custom_version.to_string()).join(format!("{}.json", self.custom_version.to_string()));
+        let mut file = File::open(filepath).await?;
+        let mut content = String::new();
+        file.read_to_string(&mut content).await?;
+        Ok(serde_json::from_str(&content)?)
+    }
 
 }
 
@@ -143,17 +153,11 @@ impl JavaPlatform {
         Ok(())
     }
 
-    pub async fn extract_java(&self, root_path: &Path, log_channel: mpsc::Sender<ProgressMessage>) -> Result<()> {
+    pub async fn extract_java(&self, root_path: &Path) -> Result<()> {
         let (url, extension) = match ACTUAL_OS {
-            OSName::Linux => {
-                (self.linux.clone(), "tar.gz")
-            },
-            OSName::Windows => {
-                (self.win32.clone(), "zip")
-            },
-            _ => {
-                bail!("Your current is not supported")
-            }
+            OSName::Linux => (self.linux.clone(), "tar.gz"),
+            OSName::Windows => (self.win32.clone(), "zip"),
+            _ => bail!("Your current is not supported")
         };
         let url = match url {
             Some(url) => url,
@@ -161,7 +165,7 @@ impl JavaPlatform {
         };
         let archive_path = root_path.join("runtime").join("download").join(format!("{}.{}", url.x64.name, extension));
         let extract_path = root_path.join("runtime");
-        extract_zip(archive_path, extract_path, log_channel).await?;
+        extract_zip(&archive_path, &extract_path).await?;
 
         Ok(())
     }
@@ -171,7 +175,7 @@ impl JavaPlatform {
 impl ModsPack {
 
 
-    pub async fn download_mods(&self, reqwest: &Client, modpack_dir: PathBuf, log_channel: mpsc::Sender<ProgressMessage>) -> Result<()> {
+    pub async fn download_mods(&self, reqwest: &Client, modpack_dir: &PathBuf, root_dir: &PathBuf, log_channel: mpsc::Sender<ProgressMessage>) -> Result<()> {
         for index in 0..self.mods.len() {
             log_channel.send(ProgressMessage { p_type: "mods".to_string(), current: index, total: self.mods.len() }).await?;
             let mod_url = self.mods.get(index).ok_or(anyhow!("Cannot get mod download link"))?;
@@ -187,12 +191,15 @@ impl ModsPack {
                 .write(true)
                 .create_new(true)
                 .append(true)
-                .open(filepath)
+                .open(filepath.clone())
                 .await?;
                 while let Some(chunk) = res.chunk().await? {
                     file.write_all(&chunk).await?;
                 }
+            } else {
+                println!("Mod {} already downloaded", sha1);
             }
+            extract_zip(&filepath, &root_dir).await?;
         }
         Ok(())
     }
@@ -202,11 +209,11 @@ impl ModsPack {
             let mut hasher = Sha1::new();
             let mut file = File::open(filepath).await?;
             let mut content = Vec::new();
-            file.read(&mut content).await?;
+            file.read_to_end(&mut content).await?;
             hasher.update(content);
             let hash = hasher.finalize();
             // let b16 = base16ct::upper::encode_string(hash);
-            if &&format!("{:x}", &hash.clone()) != mod_sha1 {
+            if format!("{:x}", hash.clone()) != mod_sha1.to_lowercase() {
                 println!("Correct: {:?}, current: {:X}", mod_sha1, hash);
                 fs::remove_file(filepath).await?;
                 Ok(true)
@@ -221,7 +228,7 @@ impl ModsPack {
     
 }
 
-async fn extract_targz(archive_path: PathBuf, extract_path: PathBuf, log_channel: mpsc::Sender<ProgressMessage>) -> Result<()> {
+async fn extract_targz(archive_path: PathBuf, extract_path: PathBuf) -> Result<()> {
     let file = File::open(archive_path.clone()).await?;
     let mut archive = Archive::new(file);
     let mut entries = archive.entries()?;
@@ -234,17 +241,15 @@ async fn extract_targz(archive_path: PathBuf, extract_path: PathBuf, log_channel
     Ok(())
 }
 
-async fn extract_zip(archive_path: PathBuf, extract_path: PathBuf, log_channel: mpsc::Sender<ProgressMessage>) -> Result<()> {
+async fn extract_zip(archive_path: &PathBuf, extract_path: &PathBuf) -> Result<()> {
     // TODO add log_channel to send progression to user
     let file = File::open(archive_path.clone()).await?;
     let mut reader = ZipFileReader::with_tokio(file).await?;
-    let total = reader.file().entries().len();
     for index in 0..reader.file().entries().len() {
         if let Some(entry) = reader.file().entries().get(index) {
             let entry = entry.entry();
             let filename = entry.filename().as_str()?;
             let path = extract_path.join(filename);
-            log_channel.send(ProgressMessage { p_type: "extract".to_string(), current: index + 1, total: total }).await?;
             if entry.dir()? {
                 if path.exists() {
                     fs::remove_dir_all(path.clone()).await?; // clear folder before continue, avoid injection

@@ -114,10 +114,10 @@ async fn download(selected_chapter: usize, app: tauri::AppHandle, state: tauri::
 
 
 async fn download_libraries(opts: ClientOptions<'_>, chapter: Chapter) -> Result<String, String> {
-    let client = MinecraftClient::new(&opts).await;
+    let client = MinecraftClient::new(&opts, chapter).await;
     let res = match client {
         Ok(mut client) => {
-            match client.download_requirements(chapter).await {
+            match client.download_requirements().await {
                 Ok(_) => {
                     Ok("Content downloaded".to_string())
                 },
