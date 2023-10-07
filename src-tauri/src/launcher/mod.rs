@@ -3,10 +3,11 @@ pub mod altarik;
 
 use std::path::{Path, self, PathBuf};
 
-use anyhow::{Result, bail, anyhow};
+use anyhow::{Result, bail};
 use reqwest::{Client, StatusCode};
 use serde::{Serialize, Deserialize};
-use tokio::{fs::{self, File}, io::{AsyncWriteExt, AsyncSeekExt}, sync::mpsc};
+use sha1::{Digest, Sha1};
+use tokio::{fs::{self, File}, io::{AsyncWriteExt, AsyncSeekExt, AsyncReadExt}, sync::mpsc};
 
 use crate::authentification::GameProfile;
 
@@ -130,6 +131,7 @@ impl<'a> MinecraftClient<'_> {
         self.download_libraries(lib).await?;
         self.download_custom_libraries(lib).await?;
         self.download_assets(asset).await?;
+        self.download_jar().await?;
         self.opts.log_channel.send(ProgressMessage { p_type: "completed".to_string(), current: 0, total: 0 }).await?;
         Ok(())
     }
@@ -150,7 +152,12 @@ impl<'a> MinecraftClient<'_> {
             
             let size = file.seek(std::io::SeekFrom::End(0)).await?;
             file.seek(std::io::SeekFrom::Start(0)).await?;
-            if size != i.downloads.artifact.size {
+            let mut hasher = Sha1::new();
+            let mut content = Vec::new();
+            file.read_to_end(&mut content).await?;
+            hasher.update(content);
+            let hash = hasher.finalize();
+            if size != i.downloads.artifact.size || format!("{:x}", hash) != i.downloads.artifact.sha1.to_lowercase() {
                 let url = i.downloads.artifact.url.clone();
 
                 let mut sha_url = url.clone();
@@ -185,9 +192,34 @@ impl<'a> MinecraftClient<'_> {
     async fn download_custom_libraries(&self, lib_dir: &PathBuf) -> Result<()> {
         if let Some(custom) = &self.custom_details {
             for i in &custom.libraries {
+                let splited: Vec<&str> = i.name.split(":").collect();
+                if splited.len() == 3 {
+                    let file_name = format!("{}-{}.jar", splited[1], splited[2]);
+                    let sha256_url = format!("{}.sha256", file_name);
+                    let url = format!("{}/{}/{}/{}/{}", i.url, splited[0].replace(".", "/"), splited[1], splited[2], file_name);
+                    
+                    let sha256 = self.reqwest_client
+                        .get(sha256_url)
+                        .send()
+                        .await?
+                        .text()
+                        .await?;
+                    let sep = path::MAIN_SEPARATOR_STR;
+                    let p = format!("{}{sep}{}{sep}{}{sep}{}", splited[0].replace(".", sep), splited[1], splited[2], splited[1]);
+                    let file_path = lib_dir.join(p);
+                    if !file_path.exists() {
+
+                    }
+                } else {
+                    bail!("Cannot resolve dependency url");
+                }
                 
             }
         }
+        Ok(())
+    }
+
+    async fn download_jar(&mut self) -> Result<()> {
         Ok(())
     }
 
@@ -232,7 +264,13 @@ impl<'a> MinecraftClient<'_> {
             let size = file.seek(std::io::SeekFrom::End(0)).await?;
             file.seek(std::io::SeekFrom::Start(0)).await?;
 
-            if size != value.size {
+            let mut hasher = Sha1::new();
+            let mut content = Vec::new();
+            file.read_to_end(&mut content).await?;
+            hasher.update(content);
+            let hash_file = hasher.finalize();
+
+            if size != value.size || format!("{:x}", hash_file) != value.hash {
                 let url = format!("https://resources.download.minecraft.net/{}/{}", two_hex, hash);
                 let received = self.reqwest_client
                     .get(url)
@@ -242,11 +280,15 @@ impl<'a> MinecraftClient<'_> {
                     .await?;
                 file.write_all(&received).await?;
                 println!("{} downloaded", value.hash);
-            } // else {
-            //     println!("{} already downloaded", value.hash);
-            // }
+            } else {
+                println!("{} already downloaded", value.hash);
+            }
             self.opts.log_channel.send( ProgressMessage { p_type: "assets".to_string(), current: progress + 1, total }).await?;
         }
+        Ok(())
+    }
+
+    pub async fn launch_minecraft(&mut self) -> Result<()> {
         Ok(())
     }
 
